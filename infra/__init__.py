@@ -1,2 +1,2 @@
-"""Infrastructure adapters package placeholder."""
+"""Infrastructure adapters – concrete implementations of domain ports."""
 

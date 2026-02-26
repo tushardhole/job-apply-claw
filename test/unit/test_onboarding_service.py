@@ -18,7 +18,6 @@ def _default_answers() -> dict[str, str]:
         "email": "ada@example.com",
         "phone": "",
         "address": "London",
-        "work_authorization": "",
         "primary_resume_path": "/tmp/resume.pdf",
         "additional_resume_paths": "/tmp/alt1.pdf, ",
         "cover_letter_paths": "",
@@ -43,7 +42,6 @@ def test_ensure_onboarding_complete_collects_and_persists_new_data() -> None:
         email="ada@example.com",
         phone=None,
         address="London",
-        work_authorization=None,
     )
     assert summary.resume_data == ResumeData(
         primary_resume_path="/tmp/resume.pdf",
@@ -53,7 +51,6 @@ def test_ensure_onboarding_complete_collects_and_persists_new_data() -> None:
     )
     assert summary.common_answers.get("salary_expectation") == "120000"
 
-    # Data has been persisted in the in-memory repository
     assert repo.get_user_profile() == summary.profile
     assert repo.get_resume_data() is not None
     assert repo.get_common_answers().answers == summary.common_answers.answers
@@ -72,14 +69,7 @@ def test_ensure_onboarding_complete_reuses_existing_data() -> None:
         skills=("python",),
     )
     repo.save_user_profile(existing_profile)
-    repo.save_resume_data(
-        {
-            "primary_resume_path": existing_resume.primary_resume_path,
-            "additional_resume_paths": list(existing_resume.additional_resume_paths),
-            "cover_letter_paths": list(existing_resume.cover_letter_paths),
-            "skills": list(existing_resume.skills),
-        },
-    )
+    repo.save_resume_data(existing_resume)
     repo.save_common_answers(
         CommonAnswers(answers={"salary_expectation": "100000"}),
     )
@@ -92,7 +82,6 @@ def test_ensure_onboarding_complete_reuses_existing_data() -> None:
 
     summary = asyncio.run(main())
 
-    # Existing data should be reused as-is
     assert summary.profile == existing_profile
     assert summary.resume_data == existing_resume
     assert summary.common_answers.answers == {"salary_expectation": "100000"}
@@ -114,4 +103,3 @@ def test_validation_error_for_missing_required_fields() -> None:
 
     with pytest.raises(OnboardingValidationError):
         asyncio.run(main())
-
