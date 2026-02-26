@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from domain import CommonAnswers, OnboardingRepositoryPort, UserProfile
-from domain.models import ResumeData
+from domain import CommonAnswers, OnboardingRepositoryPort, ResumeData, UserProfile
 
 
 class InMemoryOnboardingRepository:

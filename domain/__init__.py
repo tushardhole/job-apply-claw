@@ -7,10 +7,13 @@ independent of any specific infrastructure or frameworks.
 
 from .models import (  # noqa: F401
     AccountCredential,
+    ChoiceQuestionResponse,
     CommonAnswers,
+    FreeTextQuestionResponse,
     JobApplicationRecord,
     JobApplicationStatus,
     JobPostingRef,
+    ResumeData,
     RunContext,
     UserProfile,
 )
@@ -29,7 +32,10 @@ from .ports import (  # noqa: F401
 __all__ = [
     # Models
     "UserProfile",
+    "ResumeData",
     "CommonAnswers",
+    "FreeTextQuestionResponse",
+    "ChoiceQuestionResponse",
     "JobPostingRef",
     "JobApplicationStatus",
     "JobApplicationRecord",
