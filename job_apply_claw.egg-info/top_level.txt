@@ -1,0 +1,4 @@
+app
+cli
+domain
+infra
