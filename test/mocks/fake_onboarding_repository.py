@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Mapping
-
 from domain import CommonAnswers, OnboardingRepositoryPort, UserProfile
+from domain.models import ResumeData
 
 
 class InMemoryOnboardingRepository:
@@ -14,7 +13,7 @@ class InMemoryOnboardingRepository:
 
     def __init__(self) -> None:
         self._user_profile: UserProfile | None = None
-        self._resume_data: dict[str, Any] | None = None
+        self._resume_data: ResumeData | None = None
         self._common_answers: CommonAnswers = CommonAnswers()
         self._config: dict[str, str] = {}
 
@@ -26,11 +25,11 @@ class InMemoryOnboardingRepository:
         self._user_profile = profile
 
     # Resume data ----------------------------------------------------------
-    def get_resume_data(self) -> Mapping[str, Any] | None:
+    def get_resume_data(self) -> ResumeData | None:
         return self._resume_data
 
-    def save_resume_data(self, data: Mapping[str, Any]) -> None:
-        self._resume_data = dict(data)
+    def save_resume_data(self, data: ResumeData) -> None:
+        self._resume_data = data
 
     # Common answers -------------------------------------------------------
     def get_common_answers(self) -> CommonAnswers:
@@ -46,7 +45,6 @@ class InMemoryOnboardingRepository:
     def set_config_value(self, key: str, value: str) -> None:
         self._config[key] = value
 
-    # For type-checkers: declare that we satisfy the protocol
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return (
             f"InMemoryOnboardingRepository("
@@ -56,7 +54,5 @@ class InMemoryOnboardingRepository:
         )
 
 
-# Ensure the class conforms to the protocol at type-check time.
 _repo_protocol_check: OnboardingRepositoryPort
 _repo_protocol_check = InMemoryOnboardingRepository()
-

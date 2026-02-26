@@ -8,13 +8,17 @@ from typing import Mapping, Sequence
 
 @dataclass(frozen=True)
 class UserProfile:
-    """Basic user profile information used when applying to jobs."""
+    """Basic user profile information used when applying to jobs.
+
+    Work-authorization status is intentionally excluded here.
+    It is country- and time-sensitive, so the bot should always
+    ask the user at application time via ``WorkAuthorizationService``.
+    """
 
     full_name: str
     email: str
     phone: str | None = None
     address: str | None = None
-    work_authorization: str | None = None
 
 
 @dataclass(frozen=True)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Mapping, Sequence
+from typing import Sequence
 
 from domain.models import CommonAnswers, ResumeData, UserProfile
 from domain.ports import OnboardingRepositoryPort, UserInteractionPort
@@ -50,12 +50,10 @@ class OnboardingService:
         else:
             self._validate_profile(profile)
 
-        resume_data_mapping = self._repo.get_resume_data()
-        if resume_data_mapping is None:
+        resume_data = self._repo.get_resume_data()
+        if resume_data is None:
             resume_data = await self._collect_resume_data()
-            self._repo.save_resume_data(_resume_data_to_mapping(resume_data))
-        else:
-            resume_data = _resume_data_from_mapping(resume_data_mapping)
+            self._repo.save_resume_data(resume_data)
 
         common_answers = self._repo.get_common_answers()
         if not common_answers.answers:
@@ -90,18 +88,12 @@ class OnboardingService:
             "What is your address (city, country or full mailing address)? "
             "Leave blank to skip.",
         )
-        work_auth_resp = await self._ui.ask_free_text(
-            "work_authorization",
-            "Describe your work authorization status "
-            "(for example, 'US citizen', 'H1B required'). Leave blank to skip.",
-        )
 
         profile = UserProfile(
             full_name=full_name_resp.text.strip(),
             email=email_resp.text.strip(),
             phone=phone_resp.text.strip() or None,
             address=address_resp.text.strip() or None,
-            work_authorization=work_auth_resp.text.strip() or None,
         )
         self._validate_profile(profile)
         return profile
@@ -171,38 +163,4 @@ class OnboardingService:
 
 def _split_csv(raw: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in raw.split(",") if item.strip())
-
-
-def _resume_data_to_mapping(data: ResumeData) -> dict[str, Any]:
-    return {
-        "primary_resume_path": data.primary_resume_path,
-        "additional_resume_paths": list(data.additional_resume_paths),
-        "cover_letter_paths": list(data.cover_letter_paths),
-        "skills": list(data.skills),
-    }
-
-
-def _as_string_sequence(value: object) -> tuple[str, ...]:
-    if isinstance(value, str):
-        return (value,)
-    if isinstance(value, Sequence):
-        return tuple(str(v) for v in value)
-    return ()
-
-
-def _resume_data_from_mapping(raw: Mapping[str, Any]) -> ResumeData:
-    primary = str(raw.get("primary_resume_path", "")).strip()
-    if not primary:
-        raise OnboardingValidationError("primary_resume_path cannot be empty")
-
-    return ResumeData(
-        primary_resume_path=primary,
-        additional_resume_paths=_as_string_sequence(
-            raw.get("additional_resume_paths", []),
-        ),
-        cover_letter_paths=_as_string_sequence(
-            raw.get("cover_letter_paths", []),
-        ),
-        skills=_as_string_sequence(raw.get("skills", [])),
-    )
 

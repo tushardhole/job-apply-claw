@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from datetime import datetime
-from typing import Any, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Any, Protocol, Sequence, runtime_checkable
 
 from domain.models import (
     AccountCredential,
@@ -11,6 +11,7 @@ from domain.models import (
     FreeTextQuestionResponse,
     JobApplicationRecord,
     JobPostingRef,
+    ResumeData,
     RunContext,
     UserProfile,
 )
@@ -29,12 +30,11 @@ class OnboardingRepositoryPort(Protocol):
         ...
 
     @abstractmethod
-    def get_resume_data(self) -> Mapping[str, Any] | None:
-        """Return a serializable snapshot for infra-specific formats."""
+    def get_resume_data(self) -> ResumeData | None:
         ...
 
     @abstractmethod
-    def save_resume_data(self, data: Mapping[str, Any]) -> None:
+    def save_resume_data(self, data: ResumeData) -> None:
         ...
 
     @abstractmethod
