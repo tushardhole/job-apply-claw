@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "job-apply-claw"
+version = "0.1.0"
+description = "Agentic bot core for automating job applications via browser automation and chat-based user interaction."
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+  { name = "Job Apply Claw", email = "you@example.com" },
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.0",
+  "pre-commit>=4.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "-q"
+testpaths = ["test"]
+
