@@ -2,8 +2,6 @@
 
 Agentic bot core for automating job applications using browser automation and chat-based user interaction.
 
-> Testing gitignore fix
-
 ### Project layout
 
 - `app/`: Future desktop / UI layer that will consume the domain services.
