@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Sequence
 
 import pytest
@@ -37,13 +37,13 @@ def test_job_application_record_status_enum_roundtrip() -> None:
         job_title="Software Engineer",
         job_url="https://example.com/jobs/1",
         status=JobApplicationStatus.APPLIED,
-        applied_at=datetime.utcnow(),
+        applied_at=datetime.now(timezone.utc),
     )
     assert record.status is JobApplicationStatus.APPLIED
 
 
 def test_account_credential_timestamps() -> None:
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
     cred = AccountCredential(
         id="cred-1",
         portal="greenhouse",
