@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+<head><title>Image Captcha - Zeta Corp</title></head>
+<body>
+  <h1>Apply as Guest</h1>
+  <form id="apply-form">
+    <label for="full_name">Full Name</label>
+    <input id="full_name" name="full_name" type="text" />
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <div id="captcha-section">
+      <p>Please solve this captcha: verify you are human</p>
+      <p>Select all images matching: traffic lights</p>
+      <div class="image-captcha-grid">
+        <img src="" alt="img1" /><img src="" alt="img2" /><img src="" alt="img3" />
+      </div>
+    </div>
+
+    <button type="button" id="apply-btn">Apply</button>
+  </form>
+  <div id="result"></div>
+</body>
+</html>
