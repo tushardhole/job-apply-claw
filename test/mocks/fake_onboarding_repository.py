@@ -14,7 +14,6 @@ class InMemoryOnboardingRepository:
         self._user_profile: UserProfile | None = None
         self._resume_data: ResumeData | None = None
         self._common_answers: CommonAnswers = CommonAnswers()
-        self._config: dict[str, str] = {}
 
     # User profile ---------------------------------------------------------
     def get_user_profile(self) -> UserProfile | None:
@@ -36,13 +35,6 @@ class InMemoryOnboardingRepository:
 
     def save_common_answers(self, answers: CommonAnswers) -> None:
         self._common_answers = answers
-
-    # Config values --------------------------------------------------------
-    def get_config_value(self, key: str) -> str | None:
-        return self._config.get(key)
-
-    def set_config_value(self, key: str, value: str) -> None:
-        self._config[key] = value
 
     def __repr__(self) -> str:  # pragma: no cover - debug helper
         return (

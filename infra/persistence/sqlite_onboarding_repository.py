@@ -12,9 +12,8 @@ class SQLiteOnboardingRepository:
     """
     SQLite-backed implementation of ``OnboardingRepositoryPort``.
 
-    All onboarding data (user profile, resume metadata, common answers,
-    and arbitrary config key/value pairs) lives in a single database
-    file, scoped by ``profile_id``.
+    All onboarding data (user profile, resume metadata, and common answers)
+    lives in a single database file, scoped by ``profile_id``.
 
     Today only a single profile (``"default"``) is used, but the schema
     supports multiple profiles so that adding a Netflix-style profile
@@ -45,12 +44,6 @@ class SQLiteOnboardingRepository:
         PRIMARY KEY (profile_id, key)
     );
 
-    CREATE TABLE IF NOT EXISTS config (
-        profile_id TEXT NOT NULL,
-        key        TEXT NOT NULL,
-        value      TEXT NOT NULL,
-        PRIMARY KEY (profile_id, key)
-    );
     """
 
     def __init__(
@@ -63,6 +56,12 @@ class SQLiteOnboardingRepository:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(self._SCHEMA_SQL)
         self._profile_id = profile_id
+
+    def __enter__(self) -> "SQLiteOnboardingRepository":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
 
     # -- User profile -------------------------------------------------------
 
@@ -148,32 +147,20 @@ class SQLiteOnboardingRepository:
         return CommonAnswers(answers={k: v for k, v in rows})
 
     def save_common_answers(self, answers: CommonAnswers) -> None:
-        self._conn.execute(
-            "DELETE FROM common_answers WHERE profile_id = ?",
-            (self._profile_id,),
-        )
-        self._conn.executemany(
-            "INSERT INTO common_answers (profile_id, key, value) VALUES (?, ?, ?)",
-            [(self._profile_id, k, v) for k, v in answers.answers.items()],
-        )
-        self._conn.commit()
-
-    # -- Config values ------------------------------------------------------
-
-    def get_config_value(self, key: str) -> str | None:
-        row = self._conn.execute(
-            "SELECT value FROM config WHERE profile_id = ? AND key = ?",
-            (self._profile_id, key),
-        ).fetchone()
-        return row[0] if row else None
-
-    def set_config_value(self, key: str, value: str) -> None:
-        self._conn.execute(
-            "INSERT INTO config (profile_id, key, value) VALUES (?, ?, ?) "
-            "ON CONFLICT(profile_id, key) DO UPDATE SET value=excluded.value",
-            (self._profile_id, key, value),
-        )
-        self._conn.commit()
+        self._conn.execute("BEGIN")
+        try:
+            self._conn.execute(
+                "DELETE FROM common_answers WHERE profile_id = ?",
+                (self._profile_id,),
+            )
+            self._conn.executemany(
+                "INSERT INTO common_answers (profile_id, key, value) VALUES (?, ?, ?)",
+                [(self._profile_id, k, v) for k, v in answers.answers.items()],
+            )
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
 
     def close(self) -> None:
         self._conn.close()

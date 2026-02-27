@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
+from types import MappingProxyType
 from typing import Mapping, Sequence
 
 
@@ -40,6 +41,10 @@ class CommonAnswers:
     """
 
     answers: Mapping[str, str] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # Freeze internal mapping to uphold dataclass immutability expectations.
+        object.__setattr__(self, "answers", MappingProxyType(dict(self.answers)))
 
     def get(self, key: str, default: str | None = None) -> str | None:
         return self.answers.get(key, default)
@@ -96,7 +101,7 @@ class AccountCredential:
     portal: str  # e.g. "greenhouse"
     tenant: str  # e.g. "company-a"
     email: str
-    secret: str
+    password: str
     created_at: datetime
     updated_at: datetime
 
