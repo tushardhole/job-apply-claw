@@ -22,6 +22,7 @@ from .ports import (  # noqa: F401
     ClockPort,
     ConfigRepositoryPort,
     CredentialRepositoryPort,
+    DebugArtifactStorePort,
     IdGeneratorPort,
     JobApplicationRepositoryPort,
     LLMClientPort,
@@ -53,5 +54,6 @@ __all__ = [
     "ClockPort",
     "IdGeneratorPort",
     "LoggerPort",
+    "DebugArtifactStorePort",
 ]
 

@@ -19,9 +19,12 @@ dev = [
   "pre-commit>=4.0",
 ]
 
+[project.scripts]
+job-apply-cli = "cli.main:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["app", "cli", "domain", "infra"]
+include = ["app*", "cli*", "domain*", "infra*", "test*"]
 
 [tool.pytest.ini_options]
 addopts = "-q"

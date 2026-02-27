@@ -231,6 +231,22 @@ class LoggerPort(Protocol):
         ...
 
 
+@runtime_checkable
+class DebugArtifactStorePort(Protocol):
+    """Storage abstraction for debug run screenshots and artifacts."""
+
+    def ensure_run_directory(self, run_context: RunContext) -> str:
+        ...
+
+    def save_screenshot(
+        self,
+        run_context: RunContext,
+        step_name: str,
+        image_bytes: bytes,
+    ) -> str:
+        ...
+
+
 __all__ = [
     "OnboardingRepositoryPort",
     "ConfigRepositoryPort",
@@ -242,5 +258,6 @@ __all__ = [
     "ClockPort",
     "IdGeneratorPort",
     "LoggerPort",
+    "DebugArtifactStorePort",
 ]
 
