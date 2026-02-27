@@ -7,6 +7,7 @@ independent of any specific infrastructure or frameworks.
 
 from .models import (  # noqa: F401
     AccountCredential,
+    AppConfig,
     ChoiceQuestionResponse,
     CommonAnswers,
     FreeTextQuestionResponse,
@@ -20,6 +21,7 @@ from .models import (  # noqa: F401
 from .ports import (  # noqa: F401
     BrowserSessionPort,
     ClockPort,
+    ConfigProviderPort,
     ConfigRepositoryPort,
     CredentialRepositoryPort,
     DebugArtifactStorePort,
@@ -33,6 +35,7 @@ from .ports import (  # noqa: F401
 
 __all__ = [
     # Models
+    "AppConfig",
     "UserProfile",
     "ResumeData",
     "CommonAnswers",
@@ -46,6 +49,7 @@ __all__ = [
     # Ports
     "OnboardingRepositoryPort",
     "ConfigRepositoryPort",
+    "ConfigProviderPort",
     "JobApplicationRepositoryPort",
     "CredentialRepositoryPort",
     "UserInteractionPort",

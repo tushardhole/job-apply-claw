@@ -121,6 +121,17 @@ class RunContext:
 
 
 @dataclass(frozen=True)
+class AppConfig:
+    """Application-level configuration loaded from config.json."""
+
+    bot_token: str
+    telegram_chat_id: str
+    openai_key: str
+    openai_base_url: str
+    debug_mode: bool = False
+
+
+@dataclass(frozen=True)
 class FreeTextQuestionResponse:
     """Structured response to a free-text question asked to the user."""
 
@@ -137,6 +148,7 @@ class ChoiceQuestionResponse:
 
 
 __all__ = [
+    "AppConfig",
     "UserProfile",
     "ResumeData",
     "CommonAnswers",

@@ -6,6 +6,7 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 from domain.models import (
     AccountCredential,
+    AppConfig,
     ChoiceQuestionResponse,
     CommonAnswers,
     FreeTextQuestionResponse,
@@ -232,6 +233,31 @@ class LoggerPort(Protocol):
 
 
 @runtime_checkable
+class ConfigProviderPort(Protocol):
+    """Reads application config and user profile from the config folder.
+
+    Implementations re-read from disk on every call so that changes
+    take effect without restarting the application.
+    """
+
+    def get_config(self) -> AppConfig:
+        ...
+
+    def get_profile(self) -> UserProfile:
+        ...
+
+    def get_resume_path(self) -> str:
+        ...
+
+    def get_cover_letter_path(self) -> str:
+        ...
+
+    def validate(self) -> list[str]:
+        """Return a list of validation errors; empty means valid."""
+        ...
+
+
+@runtime_checkable
 class DebugArtifactStorePort(Protocol):
     """Storage abstraction for debug run screenshots and artifacts."""
 
@@ -257,6 +283,7 @@ class DebugArtifactStorePort(Protocol):
 __all__ = [
     "OnboardingRepositoryPort",
     "ConfigRepositoryPort",
+    "ConfigProviderPort",
     "JobApplicationRepositoryPort",
     "CredentialRepositoryPort",
     "UserInteractionPort",
