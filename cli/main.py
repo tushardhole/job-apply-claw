@@ -14,7 +14,6 @@ from domain.services import (
     OnboardingService,
     WorkAuthorizationService,
 )
-from infra.browser import MockBrowserSession
 from infra.interaction import ConsoleUserInteraction
 from infra.logs import FileSystemDebugArtifactStore
 from infra.persistence import (
@@ -40,7 +39,11 @@ def build_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("--title", required=True)
     apply_p.add_argument("--board-type", default="unknown")
     apply_p.add_argument("--debug", action="store_true")
+    apply_p.add_argument("--debug-artifacts-dir", default="logs")
     apply_p.add_argument("--interaction", choices=["console", "telegram"], default="console")
+    apply_p.add_argument("--browser", choices=["mock", "playwright"], default="mock")
+    apply_p.add_argument("--headless", action="store_true", default=True)
+    apply_p.add_argument("--no-headless", dest="headless", action="store_false")
     apply_p.add_argument("--mock-login-required", action="store_true")
     apply_p.add_argument("--mock-guest-apply", action="store_true")
     apply_p.add_argument("--mock-captcha-text", action="store_true")
@@ -101,44 +104,56 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "apply-url":
-        summary = asyncio.run(
-            OnboardingService(
-                repo=onboarding_repo,
-                ui=ConsoleUserInteraction(),
-            ).ensure_onboarding_complete()
-        )
-        if args.interaction == "telegram":
-            token = config_repo.get_config_value("BOT_TOKEN")
-            chat_id = config_repo.get_config_value("TELEGRAM_CHAT_ID")
-            if not token or not chat_id:
-                raise SystemExit("Missing BOT_TOKEN or TELEGRAM_CHAT_ID in config.")
-            ui = TelegramUserInteraction(TelegramBotConfig(bot_token=token, chat_id=chat_id))
-        else:
-            ui = ConsoleUserInteraction()
+        return _handle_apply(args, onboarding_repo, config_repo, job_repo, credential_repo, logger, clock, ids)
 
-        browser = MockBrowserSession(
-            login_required=args.mock_login_required,
-            guest_apply_available=args.mock_guest_apply or not args.mock_login_required,
-            captcha_present=args.mock_captcha_text or args.mock_captcha_image,
-            image_captcha=args.mock_captcha_image,
-            oauth_only_login=args.mock_oauth_only,
-            otp_required=args.mock_otp_required,
-            account_already_exists=args.mock_account_exists,
-        )
-        run_context = RunContext(run_id=ids.new_run_id(), is_debug=args.debug)
-        agent = JobApplicationAgent(
-            job_repo=job_repo,
-            credential_repo=credential_repo,
-            clock=clock,
-            id_generator=ids,
-            logger=logger,
-            account_flow=AccountFlowService(),
-            captcha_handler=CaptchaHandler(),
-            work_auth_service=WorkAuthorizationService(),
-            debug_manager=DebugRunManager(FileSystemDebugArtifactStore()),
-        )
-        record = asyncio.run(
-            agent.apply_to_job(
+    raise SystemExit(f"Unsupported command: {args.command}")
+
+
+def _handle_apply(
+    args: argparse.Namespace,
+    onboarding_repo: SQLiteOnboardingRepository,
+    config_repo: SQLiteConfigRepository,
+    job_repo: SQLiteJobApplicationRepository,
+    credential_repo: SQLiteCredentialRepository,
+    logger: StructuredLogger,
+    clock: SystemClock,
+    ids: UuidIdGenerator,
+) -> int:
+    summary = asyncio.run(
+        OnboardingService(
+            repo=onboarding_repo,
+            ui=ConsoleUserInteraction(),
+        ).ensure_onboarding_complete()
+    )
+    if args.interaction == "telegram":
+        token = config_repo.get_config_value("BOT_TOKEN")
+        chat_id = config_repo.get_config_value("TELEGRAM_CHAT_ID")
+        if not token or not chat_id:
+            raise SystemExit("Missing BOT_TOKEN or TELEGRAM_CHAT_ID in config.")
+        ui = TelegramUserInteraction(TelegramBotConfig(bot_token=token, chat_id=chat_id))
+    else:
+        ui = ConsoleUserInteraction()
+
+    browser = _create_browser(args)
+    run_context = RunContext(run_id=ids.new_run_id(), is_debug=args.debug)
+    artifact_store = FileSystemDebugArtifactStore(base_dir=args.debug_artifacts_dir)
+    agent = JobApplicationAgent(
+        job_repo=job_repo,
+        credential_repo=credential_repo,
+        clock=clock,
+        id_generator=ids,
+        logger=logger,
+        account_flow=AccountFlowService(),
+        captcha_handler=CaptchaHandler(),
+        work_auth_service=WorkAuthorizationService(),
+        debug_manager=DebugRunManager(artifact_store),
+    )
+
+    async def _run() -> int:
+        if hasattr(browser, "launch"):
+            await browser.launch()
+        try:
+            record = await agent.apply_to_job(
                 browser=browser,
                 ui=ui,
                 job=JobPostingRef(
@@ -152,11 +167,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                 common_answers=summary.common_answers or CommonAnswers(),
                 run_context=run_context,
             )
-        )
-        print(f"result={record.status.value} reason={record.failure_reason or '-'}")
-        return 0
+            print(f"result={record.status.value} reason={record.failure_reason or '-'}")
+            return 0
+        finally:
+            if hasattr(browser, "close") and callable(browser.close):
+                await browser.close()
 
-    raise SystemExit(f"Unsupported command: {args.command}")
+    return asyncio.run(_run())
+
+
+def _create_browser(args: argparse.Namespace) -> object:
+    if args.browser == "playwright":
+        from infra.browser import PlaywrightBrowserSession
+
+        return PlaywrightBrowserSession(headless=args.headless)
+
+    from infra.browser import MockBrowserSession
+
+    return MockBrowserSession(
+        login_required=args.mock_login_required,
+        guest_apply_available=args.mock_guest_apply or not args.mock_login_required,
+        captcha_present=args.mock_captcha_text or args.mock_captcha_image,
+        image_captcha=args.mock_captcha_image,
+        oauth_only_login=args.mock_oauth_only,
+        otp_required=args.mock_otp_required,
+        account_already_exists=args.mock_account_exists,
+    )
 
 
 if __name__ == "__main__":
