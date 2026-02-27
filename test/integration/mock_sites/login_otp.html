@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head><title>Login + OTP - Gamma Corp</title></head>
+<body>
+  <h1>Sign In to Apply</h1>
+  <div id="login-section">
+    <p>Create account to proceed.</p>
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+    <label for="password">Password</label>
+    <input id="password" name="password" type="password" />
+    <button type="button" onclick="
+      document.getElementById('login-section').style.display='none';
+      document.getElementById('otp-section').style.display='block';
+    ">Create Account</button>
+  </div>
+  <div id="otp-section" style="display:none">
+    <p>Enter the one-time verification code sent to your email.</p>
+    <label for="otp">OTP Code</label>
+    <input id="otp" name="otp" type="text" />
+    <button type="button" onclick="
+      document.getElementById('otp-section').style.display='none';
+      document.getElementById('apply-section').style.display='block';
+    ">Verify</button>
+  </div>
+  <div id="apply-section" style="display:none">
+    <h2>Application Form</h2>
+    <label for="full_name">Full Name</label>
+    <input id="full_name" name="full_name" type="text" />
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+    <button type="button" id="apply-btn" onclick="document.getElementById('result').textContent='Applied!'">Apply</button>
+  </div>
+  <div id="result"></div>
+</body>
+</html>
