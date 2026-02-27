@@ -24,12 +24,20 @@ from infra.persistence import (
 )
 from infra.runtime import StructuredLogger, SystemClock, UuidIdGenerator
 from infra.telegram import TelegramBotConfig, TelegramUserInteraction
+from infra.config import FileSystemConfigProvider
+from infra.telegram import TelegramBot
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="job-apply-cli")
     parser.add_argument("--db-path", default="job_apply_claw.db")
     sub = parser.add_subparsers(dest="command", required=True)
+
+    start_p = sub.add_parser("start", help="Start the Telegram bot listener")
+    start_p.add_argument("--config-dir", default="./config", help="Path to config folder")
+    start_p.add_argument("--browser", choices=["mock", "playwright"], default="playwright")
+    start_p.add_argument("--headless", action="store_true", default=True)
+    start_p.add_argument("--no-headless", dest="headless", action="store_false")
 
     sub.add_parser("onboard")
 
@@ -73,6 +81,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     clock = SystemClock()
     ids = UuidIdGenerator()
 
+    if args.command == "start":
+        return _handle_start(args, job_repo, credential_repo, logger, clock, ids)
+
     if args.command == "onboard":
         ui = ConsoleUserInteraction()
         service = OnboardingService(repo=onboarding_repo, ui=ui)
@@ -107,6 +118,49 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _handle_apply(args, onboarding_repo, config_repo, job_repo, credential_repo, logger, clock, ids)
 
     raise SystemExit(f"Unsupported command: {args.command}")
+
+
+def _handle_start(
+    args: argparse.Namespace,
+    job_repo: SQLiteJobApplicationRepository,
+    credential_repo: SQLiteCredentialRepository,
+    logger: StructuredLogger,
+    clock: SystemClock,
+    ids: UuidIdGenerator,
+) -> int:
+    config_provider = FileSystemConfigProvider(args.config_dir)
+    errors = config_provider.validate()
+    if errors:
+        print("Config validation failed:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    cfg = config_provider.get_config()
+    profile = config_provider.get_profile()
+    print(f"Config OK: bot_token=***{cfg.bot_token[-4:]}, chat_id={cfg.telegram_chat_id}")
+    print(f"Profile: {profile.full_name} ({profile.email})")
+    print(f"Debug mode: {'ON' if cfg.debug_mode else 'OFF'}")
+    print("Starting Telegram bot listener...")
+
+    def _make_browser():
+        if args.browser == "playwright":
+            from infra.browser import PlaywrightBrowserSession
+            return PlaywrightBrowserSession(headless=args.headless)
+        from infra.browser import MockBrowserSession
+        return MockBrowserSession()
+
+    bot = TelegramBot(
+        config_provider=config_provider,
+        job_repo=job_repo,
+        credential_repo=credential_repo,
+        clock=clock,
+        id_generator=ids,
+        logger=logger,
+        browser_factory=_make_browser,
+    )
+    asyncio.run(bot.run())
+    return 0
 
 
 def _handle_apply(
