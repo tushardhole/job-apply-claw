@@ -238,6 +238,57 @@ def test_agent_result_with_data() -> None:
     assert result.data["new_password"] == "Reset-abc123"
 
 
+from domain.ports import BrowserAgentPort, BrowserToolsPort, LLMClientPort
+
+
+def test_browser_tools_port_protocol() -> None:
+    class FakeTools:
+        async def execute(self, tool_call: ToolCall) -> str:
+            return f"executed:{tool_call.name}"
+
+        def available_tools(self) -> list[ToolDefinition]:
+            return [ToolDefinition(name="click", description="Click", parameters={})]
+
+    tools: BrowserToolsPort = FakeTools()
+    assert len(tools.available_tools()) == 1
+
+    result = asyncio.run(tools.execute(ToolCall(name="click", arguments={"target": "x"})))
+    assert result == "executed:click"
+
+
+def test_browser_agent_port_protocol() -> None:
+    class FakeAgent:
+        async def execute_task(self, task: AgentTask) -> AgentResult:
+            return AgentResult(status="success")
+
+    agent: BrowserAgentPort = FakeAgent()
+    task = AgentTask(objective="test")
+    result = asyncio.run(agent.execute_task(task))
+    assert result.status == "success"
+
+
+def test_llm_client_port_complete_with_tools() -> None:
+    class FakeLLM:
+        async def complete(self, prompt: str, **kwargs: object) -> str:
+            return "text"
+
+        async def complete_with_tools(
+            self,
+            messages: list[dict[str, object]],
+            tools: list[ToolDefinition],
+            **kwargs: object,
+        ) -> LLMToolResponse:
+            return LLMToolResponse(
+                tool_calls=[ToolCall(name="goto", arguments={"url": "http://x"})],
+                finish_reason="tool_calls",
+            )
+
+    llm: LLMClientPort = FakeLLM()
+    resp = asyncio.run(llm.complete_with_tools(messages=[], tools=[]))
+    assert resp.tool_calls is not None
+    assert resp.tool_calls[0].name == "goto"
+
+
 def test_agent_models_are_frozen() -> None:
     task = AgentTask(objective="test")
     with pytest.raises(AttributeError):

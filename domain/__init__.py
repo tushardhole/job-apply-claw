@@ -25,7 +25,9 @@ from .models import (  # noqa: F401
     UserProfile,
 )
 from .ports import (  # noqa: F401
+    BrowserAgentPort,
     BrowserSessionPort,
+    BrowserToolsPort,
     ClockPort,
     ConfigProviderPort,
     ConfigRepositoryPort,
@@ -66,6 +68,8 @@ __all__ = [
     "CredentialRepositoryPort",
     "UserInteractionPort",
     "BrowserSessionPort",
+    "BrowserToolsPort",
+    "BrowserAgentPort",
     "LLMClientPort",
     "ClockPort",
     "IdGeneratorPort",

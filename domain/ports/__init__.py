@@ -6,14 +6,19 @@ from typing import Any, Protocol, Sequence, runtime_checkable
 
 from domain.models import (
     AccountCredential,
+    AgentResult,
+    AgentTask,
     AppConfig,
     ChoiceQuestionResponse,
     CommonAnswers,
     FreeTextQuestionResponse,
     JobApplicationRecord,
     JobPostingRef,
+    LLMToolResponse,
     ResumeData,
     RunContext,
+    ToolCall,
+    ToolDefinition,
     UserProfile,
 )
 
@@ -186,8 +191,39 @@ class BrowserSessionPort(Protocol):
 
 
 @runtime_checkable
+class BrowserToolsPort(Protocol):
+    """Low-level browser tools that the LLM agent can invoke.
+
+    Each tool is identified by name and receives keyword arguments.
+    Implementations translate tool calls into real browser actions
+    (Playwright) or record them (test fakes).
+    """
+
+    async def execute(self, tool_call: ToolCall) -> str:
+        """Execute a single tool call and return a textual result."""
+        ...
+
+    def available_tools(self) -> list[ToolDefinition]:
+        """Return the full set of tool schemas the LLM can choose from."""
+        ...
+
+
+@runtime_checkable
+class BrowserAgentPort(Protocol):
+    """Executes high-level tasks using LLM reasoning and browser tools.
+
+    The agent runs a loop: observe page -> LLM decides -> execute tool
+    -> repeat until the LLM signals completion via the ``done`` tool.
+    """
+
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        ...
+
+
+@runtime_checkable
 class LLMClientPort(Protocol):
-    """Thin abstraction over an LLM text completion API."""
+    """Abstraction over an LLM API that supports both plain text
+    completion and tool/function calling."""
 
     async def complete(
         self,
@@ -196,6 +232,16 @@ class LLMClientPort(Protocol):
         max_tokens: int | None = None,
         temperature: float | None = None,
     ) -> str:
+        ...
+
+    async def complete_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[ToolDefinition],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+    ) -> LLMToolResponse:
         ...
 
 
@@ -291,6 +337,8 @@ __all__ = [
     "CredentialRepositoryPort",
     "UserInteractionPort",
     "BrowserSessionPort",
+    "BrowserToolsPort",
+    "BrowserAgentPort",
     "LLMClientPort",
     "ClockPort",
     "IdGeneratorPort",
