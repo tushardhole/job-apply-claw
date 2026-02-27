@@ -1,0 +1,8 @@
+{
+  "name": "Your Full Name",
+  "email": "your@email.com",
+  "phone": "+1234567890",
+  "address": "123 Main St, City, State 12345",
+  "skills": ["Python", "JavaScript"],
+  "linkedin_url": "https://linkedin.com/in/yourprofile"
+}
