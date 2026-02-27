@@ -1,10 +1,26 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import urllib.parse
+import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
 
 from domain.models import AppConfig, ResumeData, UserProfile
+
+
+@dataclass(frozen=True)
+class ConnectivityResult:
+    """Outcome of validate_connectivity() — errors list plus bot info on success."""
+
+    errors: list[str]
+    bot_username: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return len(self.errors) == 0
 
 
 _REQUIRED_CONFIG_KEYS = {"BOT_TOKEN", "TELEGRAM_CHAT_ID", "OPENAI_KEY", "OPENAI_BASE_URL"}
@@ -92,6 +108,64 @@ class FileSystemConfigProvider:
             errors.append(f"profile.json: phone '{phone}' is not a valid phone number.")
 
         return errors
+
+    async def validate_connectivity(self) -> ConnectivityResult:
+        """Verify Telegram bot token and OpenAI API key work over the network."""
+        errors: list[str] = []
+        bot_username: str | None = None
+        config = self.get_config()
+
+        bot_username, tg_err = await asyncio.to_thread(
+            self._check_telegram, config.bot_token,
+        )
+        if tg_err:
+            errors.append(tg_err)
+
+        openai_err = await asyncio.to_thread(
+            self._check_openai, config.openai_key, config.openai_base_url,
+        )
+        if openai_err:
+            errors.append(openai_err)
+
+        return ConnectivityResult(errors=errors, bot_username=bot_username)
+
+    @staticmethod
+    def _check_telegram(bot_token: str) -> tuple[str | None, str | None]:
+        url = f"https://api.telegram.org/bot{bot_token}/getMe"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            if payload.get("ok"):
+                username = payload.get("result", {}).get("username", "unknown")
+                return username, None
+            return None, f"Telegram BOT_TOKEN rejected: {payload}"
+        except urllib.error.HTTPError as exc:
+            return None, (
+                f"Telegram BOT_TOKEN is invalid: {exc.code} {exc.reason}. "
+                "Get a valid token from @BotFather."
+            )
+        except Exception as exc:
+            return None, f"Telegram connectivity failed: {exc}"
+
+    @staticmethod
+    def _check_openai(api_key: str, base_url: str) -> str | None:
+        url = f"{base_url.rstrip('/')}/models"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            req.add_header("Authorization", f"Bearer {api_key}")
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                resp.read()
+            return None
+        except urllib.error.HTTPError as exc:
+            if exc.code == 401:
+                return (
+                    "OpenAI API key rejected: 401 Unauthorized. "
+                    "Check your OPENAI_KEY in config.json."
+                )
+            return f"OpenAI API error: {exc.code} {exc.reason}."
+        except Exception as exc:
+            return f"OpenAI connectivity failed: {exc}"
 
     def get_config(self) -> AppConfig:
         data = self._read_json("config.json")

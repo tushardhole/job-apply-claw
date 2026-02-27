@@ -340,3 +340,89 @@ def test_validate_detects_invalid_phone(tmp_path: Path) -> None:
 
     errors = FileSystemConfigProvider(str(tmp_path)).validate()
     assert any("not a valid phone" in e for e in errors)
+
+
+# -- validate_connectivity() tests -----------------------------------------
+
+
+def test_connectivity_success(tmp_path: Path) -> None:
+    import asyncio
+    from unittest.mock import patch, MagicMock
+
+    provider = _setup_valid(tmp_path)
+
+    def fake_check_telegram(token: str):
+        return ("test_bot", None)
+
+    def fake_check_openai(key: str, url: str):
+        return None
+
+    with patch.object(FileSystemConfigProvider, "_check_telegram", side_effect=fake_check_telegram), \
+         patch.object(FileSystemConfigProvider, "_check_openai", side_effect=fake_check_openai):
+        result = asyncio.run(provider.validate_connectivity())
+
+    assert result.ok
+    assert result.bot_username == "test_bot"
+    assert result.errors == []
+
+
+def test_connectivity_invalid_telegram_token(tmp_path: Path) -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    provider = _setup_valid(tmp_path)
+
+    def fake_check_telegram(token: str):
+        return (None, "Telegram BOT_TOKEN is invalid: 401 Unauthorized. Get a valid token from @BotFather.")
+
+    def fake_check_openai(key: str, url: str):
+        return None
+
+    with patch.object(FileSystemConfigProvider, "_check_telegram", side_effect=fake_check_telegram), \
+         patch.object(FileSystemConfigProvider, "_check_openai", side_effect=fake_check_openai):
+        result = asyncio.run(provider.validate_connectivity())
+
+    assert not result.ok
+    assert result.bot_username is None
+    assert any("BOT_TOKEN is invalid" in e for e in result.errors)
+
+
+def test_connectivity_invalid_openai_key(tmp_path: Path) -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    provider = _setup_valid(tmp_path)
+
+    def fake_check_telegram(token: str):
+        return ("test_bot", None)
+
+    def fake_check_openai(key: str, url: str):
+        return "OpenAI API key rejected: 401 Unauthorized. Check your OPENAI_KEY in config.json."
+
+    with patch.object(FileSystemConfigProvider, "_check_telegram", side_effect=fake_check_telegram), \
+         patch.object(FileSystemConfigProvider, "_check_openai", side_effect=fake_check_openai):
+        result = asyncio.run(provider.validate_connectivity())
+
+    assert not result.ok
+    assert result.bot_username == "test_bot"
+    assert any("OPENAI_KEY" in e for e in result.errors)
+
+
+def test_connectivity_both_fail(tmp_path: Path) -> None:
+    import asyncio
+    from unittest.mock import patch
+
+    provider = _setup_valid(tmp_path)
+
+    def fake_check_telegram(token: str):
+        return (None, "Telegram connectivity failed: timeout")
+
+    def fake_check_openai(key: str, url: str):
+        return "OpenAI connectivity failed: timeout"
+
+    with patch.object(FileSystemConfigProvider, "_check_telegram", side_effect=fake_check_telegram), \
+         patch.object(FileSystemConfigProvider, "_check_openai", side_effect=fake_check_openai):
+        result = asyncio.run(provider.validate_connectivity())
+
+    assert not result.ok
+    assert len(result.errors) == 2
