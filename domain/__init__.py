@@ -7,6 +7,9 @@ independent of any specific infrastructure or frameworks.
 
 from .models import (  # noqa: F401
     AccountCredential,
+    AgentResult,
+    AgentStep,
+    AgentTask,
     AppConfig,
     ChoiceQuestionResponse,
     CommonAnswers,
@@ -14,8 +17,11 @@ from .models import (  # noqa: F401
     JobApplicationRecord,
     JobApplicationStatus,
     JobPostingRef,
+    LLMToolResponse,
     ResumeData,
     RunContext,
+    ToolCall,
+    ToolDefinition,
     UserProfile,
 )
 from .ports import (  # noqa: F401
@@ -46,6 +52,12 @@ __all__ = [
     "JobApplicationRecord",
     "AccountCredential",
     "RunContext",
+    "ToolDefinition",
+    "ToolCall",
+    "LLMToolResponse",
+    "AgentStep",
+    "AgentTask",
+    "AgentResult",
     # Ports
     "OnboardingRepositoryPort",
     "ConfigRepositoryPort",

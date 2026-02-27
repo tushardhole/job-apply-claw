@@ -122,3 +122,132 @@ def test_user_interaction_port_protocol() -> None:
 
     asyncio.run(main())
 
+
+# --------------- Agent model tests ---------------
+
+from domain.models import (
+    AgentResult,
+    AgentStep,
+    AgentTask,
+    LLMToolResponse,
+    ToolCall,
+    ToolDefinition,
+)
+
+
+def test_tool_definition_construction() -> None:
+    td = ToolDefinition(
+        name="click",
+        description="Click an element",
+        parameters={"target": {"type": "string"}},
+    )
+    assert td.name == "click"
+    assert td.parameters["target"]["type"] == "string"
+
+
+def test_tool_call_construction() -> None:
+    tc = ToolCall(name="fill", arguments={"field": "email", "value": "a@b.com"})
+    assert tc.name == "fill"
+    assert tc.arguments["value"] == "a@b.com"
+
+
+def test_llm_tool_response_defaults() -> None:
+    resp = LLMToolResponse()
+    assert resp.tool_calls is None
+    assert resp.text is None
+    assert resp.finish_reason is None
+
+
+def test_llm_tool_response_with_tool_calls() -> None:
+    tc = ToolCall(name="goto", arguments={"url": "https://example.com"})
+    resp = LLMToolResponse(tool_calls=[tc], finish_reason="tool_calls")
+    assert resp.tool_calls is not None
+    assert len(resp.tool_calls) == 1
+    assert resp.tool_calls[0].name == "goto"
+
+
+def test_agent_step_records_tool_execution() -> None:
+    step = AgentStep(
+        step_number=0,
+        tool_name="click",
+        tool_args={"target": "Apply"},
+        tool_result="Clicked Apply",
+    )
+    assert step.step_number == 0
+    assert step.screenshot_bytes is None
+
+
+def test_agent_step_with_screenshot() -> None:
+    step = AgentStep(
+        step_number=1,
+        tool_name="screenshot",
+        tool_args={},
+        tool_result="ok",
+        screenshot_bytes=b"PNG_DATA",
+    )
+    assert step.screenshot_bytes == b"PNG_DATA"
+
+
+def test_agent_task_defaults() -> None:
+    task = AgentTask(objective="Apply to job")
+    assert task.max_steps == 50
+    assert task.debug is False
+    assert task.context == {}
+
+
+def test_agent_task_with_context() -> None:
+    task = AgentTask(
+        objective="Apply to https://example.com/jobs/1",
+        context={"profile": {"name": "Jane"}, "debug": True},
+        max_steps=30,
+        debug=True,
+    )
+    assert task.context["profile"]["name"] == "Jane"
+    assert task.max_steps == 30
+    assert task.debug is True
+
+
+def test_agent_result_success() -> None:
+    result = AgentResult(status="success")
+    assert result.status == "success"
+    assert result.reason is None
+    assert result.data == {}
+    assert result.steps_taken == []
+
+
+def test_agent_result_failed_with_steps() -> None:
+    steps = [
+        AgentStep(step_number=0, tool_name="goto", tool_args={"url": "x"}, tool_result="ok"),
+        AgentStep(step_number=1, tool_name="done", tool_args={}, tool_result="done"),
+    ]
+    result = AgentResult(
+        status="failed",
+        reason="Image captcha",
+        steps_taken=steps,
+    )
+    assert result.status == "failed"
+    assert result.reason == "Image captcha"
+    assert len(result.steps_taken) == 2
+
+
+def test_agent_result_with_data() -> None:
+    result = AgentResult(
+        status="success",
+        data={"new_password": "Reset-abc123"},
+    )
+    assert result.data["new_password"] == "Reset-abc123"
+
+
+def test_agent_models_are_frozen() -> None:
+    task = AgentTask(objective="test")
+    with pytest.raises(AttributeError):
+        task.objective = "changed"  # type: ignore[misc]
+
+    tc = ToolCall(name="click", arguments={})
+    with pytest.raises(AttributeError):
+        tc.name = "fill"  # type: ignore[misc]
+
+    result = AgentResult(status="success")
+    with pytest.raises(AttributeError):
+        result.status = "failed"  # type: ignore[misc]
+
