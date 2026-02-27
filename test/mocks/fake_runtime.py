@@ -46,6 +46,7 @@ class InMemoryLogger:
 class InMemoryDebugArtifactStore:
     def __init__(self) -> None:
         self.saved: list[tuple[str, str, bytes]] = []
+        self.metadata: list[tuple[str, dict[str, object]]] = []
 
     def ensure_run_directory(self, run_context: RunContext) -> str:
         return run_context.log_directory or f"logs/run_{run_context.run_id}"
@@ -58,6 +59,14 @@ class InMemoryDebugArtifactStore:
     ) -> str:
         self.saved.append((run_context.run_id, step_name, image_bytes))
         return f"logs/run_{run_context.run_id}/{step_name}.png"
+
+    def save_run_metadata(
+        self,
+        run_context: RunContext,
+        metadata: dict[str, object],
+    ) -> str:
+        self.metadata.append((run_context.run_id, metadata))
+        return f"logs/run_{run_context.run_id}/run_meta.json"
 
 
 _clock_check: ClockPort = FixedClock(datetime(2025, 1, 1))

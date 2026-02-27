@@ -246,6 +246,13 @@ class DebugArtifactStorePort(Protocol):
     ) -> str:
         ...
 
+    def save_run_metadata(
+        self,
+        run_context: RunContext,
+        metadata: dict[str, object],
+    ) -> str:
+        ...
+
 
 __all__ = [
     "OnboardingRepositoryPort",
