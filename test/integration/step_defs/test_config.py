@@ -16,7 +16,7 @@ def _valid_config() -> dict:
     return {
         "BOT_TOKEN": "tok-123",
         "TELEGRAM_CHAT_ID": "999",
-        "OPENAI_KEY": "sk-abc",
+        "OPENAI_KEY": "sk-abc12345678",
         "OPENAI_BASE_URL": "https://api.example.com/v1",
     }
 
