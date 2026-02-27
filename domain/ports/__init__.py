@@ -19,7 +19,7 @@ from domain.models import (
 
 @runtime_checkable
 class OnboardingRepositoryPort(Protocol):
-    """Persistence for onboarding-related data and configuration."""
+    """Persistence for onboarding-related data."""
 
     @abstractmethod
     def get_user_profile(self) -> UserProfile | None:
@@ -44,6 +44,10 @@ class OnboardingRepositoryPort(Protocol):
     @abstractmethod
     def save_common_answers(self, answers: CommonAnswers) -> None:
         ...
+
+@runtime_checkable
+class ConfigRepositoryPort(Protocol):
+    """Persistence for runtime and integration configuration values."""
 
     @abstractmethod
     def get_config_value(self, key: str) -> str | None:
@@ -229,6 +233,7 @@ class LoggerPort(Protocol):
 
 __all__ = [
     "OnboardingRepositoryPort",
+    "ConfigRepositoryPort",
     "JobApplicationRepositoryPort",
     "CredentialRepositoryPort",
     "UserInteractionPort",

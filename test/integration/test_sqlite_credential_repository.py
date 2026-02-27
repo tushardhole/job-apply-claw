@@ -25,7 +25,7 @@ def _make_credential(**overrides: object) -> AccountCredential:
         portal="greenhouse",
         tenant="company-a",
         email="user@example.com",
-        secret="s3cret",
+        password="s3cret",
         created_at=now,
         updated_at=now,
     )
@@ -53,7 +53,7 @@ def test_upsert_and_get(repo: SQLiteCredentialRepository) -> None:
     loaded = repo.get("greenhouse", "company-a", "user@example.com")
     assert loaded is not None
     assert loaded.id == "cred-1"
-    assert loaded.secret == "s3cret"
+    assert loaded.password == "s3cret"
     assert loaded.portal == "greenhouse"
     assert loaded.tenant == "company-a"
 
@@ -69,14 +69,14 @@ def test_upsert_updates_existing(repo: SQLiteCredentialRepository) -> None:
     repo.upsert(
         _make_credential(
             id="cred-1-updated",
-            secret="new-secret",
+            password="new-secret",
             updated_at=later,
         )
     )
     loaded = repo.get("greenhouse", "company-a", "user@example.com")
     assert loaded is not None
     assert loaded.id == "cred-1-updated"
-    assert loaded.secret == "new-secret"
+    assert loaded.password == "new-secret"
     assert loaded.updated_at == later
 
 
@@ -122,5 +122,14 @@ def test_data_persists_across_reopens(tmp_path: str) -> None:
     repo2 = SQLiteCredentialRepository(db_path=db)
     loaded = repo2.get("greenhouse", "company-a", "user@example.com")
     assert loaded is not None
-    assert loaded.secret == "s3cret"
+    assert loaded.password == "s3cret"
     repo2.close()
+
+
+def test_context_manager_support(tmp_path: str) -> None:
+    db = os.path.join(tmp_path, "ctx_creds.db")
+    with SQLiteCredentialRepository(db_path=db) as repo1:
+        repo1.upsert(_make_credential())
+    with SQLiteCredentialRepository(db_path=db) as repo2:
+        loaded = repo2.get("greenhouse", "company-a", "user@example.com")
+        assert loaded is not None

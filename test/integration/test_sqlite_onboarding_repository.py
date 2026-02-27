@@ -121,30 +121,6 @@ def test_save_common_answers_replaces_all(repo: SQLiteOnboardingRepository) -> N
     assert loaded.answers == {"c": "3"}
 
 
-# -- config values ----------------------------------------------------------
-
-def test_get_config_value_returns_none_for_missing(repo: SQLiteOnboardingRepository) -> None:
-    assert repo.get_config_value("nonexistent") is None
-
-
-def test_set_and_get_config_value(repo: SQLiteOnboardingRepository) -> None:
-    repo.set_config_value("BOT_TOKEN", "tok-123")
-    assert repo.get_config_value("BOT_TOKEN") == "tok-123"
-
-
-def test_set_config_value_overwrites(repo: SQLiteOnboardingRepository) -> None:
-    repo.set_config_value("key", "old")
-    repo.set_config_value("key", "new")
-    assert repo.get_config_value("key") == "new"
-
-
-def test_multiple_config_values(repo: SQLiteOnboardingRepository) -> None:
-    repo.set_config_value("key_a", "alpha")
-    repo.set_config_value("key_b", "beta")
-    assert repo.get_config_value("key_a") == "alpha"
-    assert repo.get_config_value("key_b") == "beta"
-
-
 # -- persistence across reopens --------------------------------------------
 
 def test_data_persists_across_reopens(tmp_path: str) -> None:
@@ -152,14 +128,12 @@ def test_data_persists_across_reopens(tmp_path: str) -> None:
 
     repo1 = SQLiteOnboardingRepository(db_path=db)
     repo1.save_user_profile(UserProfile(full_name="Persist", email="p@x.com"))
-    repo1.set_config_value("token", "abc")
     repo1.save_common_answers(CommonAnswers(answers={"q": "a"}))
     repo1.save_resume_data(ResumeData(primary_resume_path="/r.pdf", skills=("go",)))
     repo1.close()
 
     repo2 = SQLiteOnboardingRepository(db_path=db)
     assert repo2.get_user_profile() == UserProfile(full_name="Persist", email="p@x.com")
-    assert repo2.get_config_value("token") == "abc"
     assert repo2.get_common_answers().get("q") == "a"
     resume = repo2.get_resume_data()
     assert resume is not None
@@ -182,11 +156,6 @@ def test_profiles_are_isolated(tmp_path: str) -> None:
 
     assert alice.get_user_profile().full_name == "Alice"
     assert bob.get_user_profile().full_name == "Bob"
-
-    alice.set_config_value("theme", "dark")
-    bob.set_config_value("theme", "light")
-    assert alice.get_config_value("theme") == "dark"
-    assert bob.get_config_value("theme") == "light"
 
     alice.save_common_answers(CommonAnswers(answers={"salary": "100k"}))
     bob.save_common_answers(CommonAnswers(answers={"salary": "200k"}))
@@ -211,3 +180,13 @@ def test_default_profile_id_is_used_when_not_specified(tmp_path: str) -> None:
     repo2 = SQLiteOnboardingRepository(db_path=db)
     assert repo2.get_user_profile().full_name == "Default"
     repo2.close()
+
+
+def test_context_manager_support(tmp_path: str) -> None:
+    db = os.path.join(tmp_path, "ctx_onboarding.db")
+    with SQLiteOnboardingRepository(db_path=db) as repo1:
+        repo1.save_user_profile(UserProfile(full_name="Ctx", email="ctx@x.com"))
+    with SQLiteOnboardingRepository(db_path=db) as repo2:
+        loaded = repo2.get_user_profile()
+        assert loaded is not None
+        assert loaded.full_name == "Ctx"

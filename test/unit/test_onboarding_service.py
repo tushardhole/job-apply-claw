@@ -103,3 +103,19 @@ def test_validation_error_for_missing_required_fields() -> None:
 
     with pytest.raises(OnboardingValidationError):
         asyncio.run(main())
+
+
+def test_validation_error_for_invalid_existing_resume_data() -> None:
+    repo = InMemoryOnboardingRepository()
+    repo.save_user_profile(UserProfile(full_name="Ada Lovelace", email="ada@example.com"))
+    repo.save_resume_data(ResumeData(primary_resume_path=""))
+    repo.save_common_answers(CommonAnswers(answers={"salary_expectation": "120000"}))
+
+    ui = FakeUserInteraction(free_text_answers={})
+    service = OnboardingService(repo=repo, ui=ui)
+
+    async def main() -> None:
+        await service.ensure_onboarding_complete()
+
+    with pytest.raises(OnboardingValidationError):
+        asyncio.run(main())

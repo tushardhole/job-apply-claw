@@ -20,6 +20,7 @@ from .models import (  # noqa: F401
 from .ports import (  # noqa: F401
     BrowserSessionPort,
     ClockPort,
+    ConfigRepositoryPort,
     CredentialRepositoryPort,
     IdGeneratorPort,
     JobApplicationRepositoryPort,
@@ -43,6 +44,7 @@ __all__ = [
     "RunContext",
     # Ports
     "OnboardingRepositoryPort",
+    "ConfigRepositoryPort",
     "JobApplicationRepositoryPort",
     "CredentialRepositoryPort",
     "UserInteractionPort",

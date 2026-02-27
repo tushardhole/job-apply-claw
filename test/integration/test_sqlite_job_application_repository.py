@@ -89,6 +89,20 @@ def test_add_with_debug_run_id(repo: SQLiteJobApplicationRepository) -> None:
     assert loaded.debug_run_id == "run-42"
 
 
+def test_none_and_empty_string_are_not_collapsed(
+    repo: SQLiteJobApplicationRepository,
+) -> None:
+    repo.add(_make_record(id="rec-none", failure_reason=None, debug_run_id=None))
+    repo.add(_make_record(id="rec-empty", failure_reason="", debug_run_id=""))
+    rec_none = repo.get("rec-none")
+    rec_empty = repo.get("rec-empty")
+    assert rec_none is not None and rec_empty is not None
+    assert rec_none.failure_reason is None
+    assert rec_none.debug_run_id is None
+    assert rec_empty.failure_reason == ""
+    assert rec_empty.debug_run_id == ""
+
+
 # -- update -----------------------------------------------------------------
 
 def test_update_status(repo: SQLiteJobApplicationRepository) -> None:
@@ -143,6 +157,14 @@ def test_data_persists_across_reopens(tmp_path: str) -> None:
     assert loaded is not None
     assert loaded.company_name == "Acme Inc"
     repo2.close()
+
+
+def test_context_manager_support(tmp_path: str) -> None:
+    db = os.path.join(tmp_path, "ctx_jobs.db")
+    with SQLiteJobApplicationRepository(db_path=db) as repo1:
+        repo1.add(_make_record())
+    with SQLiteJobApplicationRepository(db_path=db) as repo2:
+        assert repo2.get("rec-1") is not None
 
 
 # -- duplicate add raises ---------------------------------------------------

@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Sequence
 
 from domain.models import CommonAnswers, ResumeData, UserProfile
 from domain.ports import OnboardingRepositoryPort, UserInteractionPort
+from domain.utils import split_csv
 
 
 class OnboardingValidationError(ValueError):
@@ -54,6 +54,8 @@ class OnboardingService:
         if resume_data is None:
             resume_data = await self._collect_resume_data()
             self._repo.save_resume_data(resume_data)
+        else:
+            self._validate_resume_data(resume_data)
 
         common_answers = self._repo.get_common_answers()
         if not common_answers.answers:
@@ -130,9 +132,9 @@ class OnboardingService:
 
         resume = ResumeData(
             primary_resume_path=primary,
-            additional_resume_paths=_split_csv(additional_resp.text),
-            cover_letter_paths=_split_csv(cover_resp.text),
-            skills=_split_csv(skills_resp.text),
+            additional_resume_paths=split_csv(additional_resp.text),
+            cover_letter_paths=split_csv(cover_resp.text),
+            skills=split_csv(skills_resp.text),
         )
         return resume
 
@@ -160,7 +162,7 @@ class OnboardingService:
         if not profile.email.strip():
             raise OnboardingValidationError("email cannot be empty")
 
-
-def _split_csv(raw: str) -> tuple[str, ...]:
-    return tuple(item.strip() for item in raw.split(",") if item.strip())
+    def _validate_resume_data(self, resume_data: ResumeData) -> None:
+        if not resume_data.primary_resume_path.strip():
+            raise OnboardingValidationError("primary_resume_path cannot be empty")
 

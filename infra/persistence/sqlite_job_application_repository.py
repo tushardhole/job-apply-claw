@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import datetime, timezone
 from typing import Sequence
 
 from domain.models import JobApplicationRecord, JobApplicationStatus
+from ._datetime import dt_to_iso, iso_to_dt
 
 
 class SQLiteJobApplicationRepository:
@@ -33,6 +33,12 @@ class SQLiteJobApplicationRepository:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(self._SCHEMA_SQL)
 
+    def __enter__(self) -> "SQLiteJobApplicationRepository":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+        self.close()
+
     def add(self, record: JobApplicationRecord) -> None:
         self._conn.execute(
             "INSERT INTO applied_jobs "
@@ -53,7 +59,7 @@ class SQLiteJobApplicationRepository:
                 record.job_title,
                 record.job_url,
                 record.status.value,
-                _dt_to_iso(record.applied_at),
+                dt_to_iso(record.applied_at),
                 record.failure_reason,
                 record.debug_run_id,
                 record.id,
@@ -86,16 +92,18 @@ class SQLiteJobApplicationRepository:
     # -- helpers ------------------------------------------------------------
 
     @staticmethod
-    def _record_to_row(r: JobApplicationRecord) -> tuple[str, ...]:
+    def _record_to_row(
+        r: JobApplicationRecord,
+    ) -> tuple[str, str, str, str, str, str | None, str | None, str | None]:
         return (
             r.id,
             r.company_name,
             r.job_title,
             r.job_url,
             r.status.value,
-            _dt_to_iso(r.applied_at),
-            r.failure_reason or "",
-            r.debug_run_id or "",
+            dt_to_iso(r.applied_at),
+            r.failure_reason,
+            r.debug_run_id,
         )
 
     @staticmethod
@@ -106,24 +114,7 @@ class SQLiteJobApplicationRepository:
             job_title=str(row[2]),
             job_url=str(row[3]),
             status=JobApplicationStatus(row[4]),
-            applied_at=_iso_to_dt(str(row[5])) if row[5] else None,
-            failure_reason=str(row[6]) if row[6] else None,
-            debug_run_id=str(row[7]) if row[7] else None,
+            applied_at=iso_to_dt(row[5] if isinstance(row[5], str) else None),
+            failure_reason=row[6] if isinstance(row[6], str) else None,
+            debug_run_id=row[7] if isinstance(row[7], str) else None,
         )
-
-
-def _dt_to_iso(dt: datetime | None) -> str | None:
-    if dt is None:
-        return None
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.isoformat()
-
-
-def _iso_to_dt(s: str) -> datetime | None:
-    if not s:
-        return None
-    dt = datetime.fromisoformat(s)
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt

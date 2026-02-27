@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime, timezone
-from typing import Sequence
 
 import pytest
 
@@ -13,9 +12,9 @@ from domain import (
     JobApplicationRepositoryPort,
     LoggerPort,
     RunContext,
-    UserInteractionPort,
     UserProfile,
 )
+from test.mocks.fake_user_interaction import FakeUserInteraction
 
 
 def test_user_profile_basics() -> None:
@@ -49,7 +48,7 @@ def test_account_credential_timestamps() -> None:
         portal="greenhouse",
         tenant="company-a",
         email="user@example.com",
-        secret="secure-value",
+        password="secure-value",
         created_at=now,
         updated_at=now,
     )
@@ -116,44 +115,10 @@ def test_logger_port_protocol(capsys: pytest.CaptureFixture[str]) -> None:
 
 
 def test_user_interaction_port_protocol() -> None:
-    class FakeUserInteraction:
-        async def send_info(self, message: str) -> None:
-            self.last_message = message
-
-        async def ask_free_text(self, question_id: str, prompt: str):
-            self.last_prompt = prompt
-            from domain.models import FreeTextQuestionResponse
-
-            return FreeTextQuestionResponse(question_id=question_id, text="answer")
-
-        async def ask_choice(
-            self,
-            question_id: str,
-            prompt: str,
-            options: Sequence[str],
-            allow_multiple: bool = False,
-        ):
-            from domain.models import ChoiceQuestionResponse
-
-            return ChoiceQuestionResponse(
-                question_id=question_id,
-                selected_options=[options[0]],
-            )
-
-        async def send_image_and_ask_text(
-            self,
-            question_id: str,
-            image_bytes: bytes,
-            prompt: str,
-        ):
-            from domain.models import FreeTextQuestionResponse
-
-            return FreeTextQuestionResponse(question_id=question_id, text="decoded")
-
     async def main() -> None:
-        ui: UserInteractionPort = FakeUserInteraction()
+        ui = FakeUserInteraction()
         resp = await ui.ask_free_text("q1", "Tell me something")
-        assert resp.text == "answer"
+        assert resp.text == ""
 
     asyncio.run(main())
 
