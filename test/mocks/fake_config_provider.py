@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from domain.models import AppConfig, ResumeData, UserProfile
+from typing import Sequence
 from domain.ports import ConfigProviderPort
 
 
@@ -35,6 +36,12 @@ class InMemoryConfigProvider:
 
     def get_resume_path(self) -> str:
         return self._resume_path
+
+    def get_resume_data(self) -> ResumeData:
+        return ResumeData(
+            primary_resume_path=self._resume_path,
+            cover_letter_paths=(self._cover_letter_path,),
+        )
 
     def get_cover_letter_path(self) -> str:
         return self._cover_letter_path

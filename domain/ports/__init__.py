@@ -249,6 +249,9 @@ class ConfigProviderPort(Protocol):
     def get_resume_path(self) -> str:
         ...
 
+    def get_resume_data(self) -> ResumeData:
+        ...
+
     def get_cover_letter_path(self) -> str:
         ...
 

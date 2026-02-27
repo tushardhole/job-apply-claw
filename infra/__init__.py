@@ -11,7 +11,7 @@ from .persistence import (
     SQLiteOnboardingRepository,
 )
 from .runtime import StructuredLogger, SystemClock, UuidIdGenerator
-from .telegram import TelegramBotConfig, TelegramUserInteraction
+from .telegram import TelegramBot, TelegramBotConfig, TelegramUserInteraction
 
 __all__ = [
     "PlaywrightBrowserSession",
@@ -26,6 +26,7 @@ __all__ = [
     "SystemClock",
     "UuidIdGenerator",
     "StructuredLogger",
+    "TelegramBot",
     "TelegramBotConfig",
     "TelegramUserInteraction",
 ]
