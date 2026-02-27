@@ -1,2 +1,2 @@
-"""CLI entrypoints package placeholder."""
+"""CLI entrypoints package."""
 
