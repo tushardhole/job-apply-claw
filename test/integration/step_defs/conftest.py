@@ -9,21 +9,17 @@ from typing import Any
 import pytest
 
 from domain.models import (
-    CommonAnswers,
+    AgentResult,
+    AgentStep,
+    AgentTask,
     JobApplicationRecord,
     JobPostingRef,
+    ResumeData,
     RunContext,
     UserProfile,
 )
-from domain.services import (
-    AccountFlowService,
-    CaptchaHandler,
-    DebugRunManager,
-    JobApplicationAgent,
-    WorkAuthorizationService,
-)
+from domain.services import DebugRunManager, JobApplicationAgent
 from test.mocks import (
-    FakeBrowserSession,
     FakeUserInteraction,
     FixedClock,
     InMemoryCredentialRepository,
@@ -34,12 +30,38 @@ from test.mocks import (
 )
 
 
+class FakeAgentForBDD:
+    """Configurable fake BrowserAgentPort for BDD scenarios."""
+
+    def __init__(
+        self,
+        result_status: str = "success",
+        result_reason: str | None = None,
+        steps: list[AgentStep] | None = None,
+        data: dict[str, Any] | None = None,
+    ) -> None:
+        self.result_status = result_status
+        self.result_reason = result_reason
+        self.steps = steps or []
+        self.data = data or {}
+        self.executed_task: AgentTask | None = None
+
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        self.executed_task = task
+        return AgentResult(
+            status=self.result_status,
+            reason=self.result_reason,
+            steps_taken=self.steps,
+            data=self.data,
+        )
+
+
 @dataclass
 class ApplyContext:
     """Holds mutable state shared across BDD steps."""
 
     profile: UserProfile = None  # type: ignore[assignment]
-    browser: FakeBrowserSession = field(default_factory=FakeBrowserSession)
+    agent: FakeAgentForBDD = field(default_factory=FakeAgentForBDD)
     ui: FakeUserInteraction = field(default_factory=FakeUserInteraction)
     job_repo: InMemoryJobApplicationRepository = field(
         default_factory=InMemoryJobApplicationRepository,
@@ -70,15 +92,12 @@ def run_apply(ctx: ApplyContext) -> None:
     if ctx.debug_mode:
         debug_manager = DebugRunManager(ctx.debug_store)
 
-    agent = JobApplicationAgent(
+    orchestrator = JobApplicationAgent(
         job_repo=ctx.job_repo,
         credential_repo=ctx.credential_repo,
         clock=clock,
         id_generator=ids,
         logger=logger,
-        account_flow=AccountFlowService(),
-        captcha_handler=CaptchaHandler(),
-        work_auth_service=WorkAuthorizationService(),
         debug_manager=debug_manager,
     )
 
@@ -88,22 +107,19 @@ def run_apply(ctx: ApplyContext) -> None:
     )
 
     async def _apply() -> JobApplicationRecord:
-        return await agent.apply_to_job(
-            browser=ctx.browser,
+        return await orchestrator.apply_to_job(
+            agent=ctx.agent,
             ui=ctx.ui,
             job=ctx.job,  # type: ignore[arg-type]
             profile=ctx.profile,
             resume_data=_default_resume_data(),
-            common_answers=CommonAnswers(),
             run_context=run_context,
         )
 
     ctx.record = asyncio.run(_apply())
 
 
-def _default_resume_data():
-    from domain.models import ResumeData
-
+def _default_resume_data() -> ResumeData:
     return ResumeData(
         primary_resume_path="/fake/resume.pdf",
         cover_letter_paths=("/fake/cover_letter.pdf",),

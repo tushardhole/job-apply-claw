@@ -9,13 +9,12 @@ from typing import Any, Callable, Sequence
 
 from domain.models import (
     ChoiceQuestionResponse,
-    CommonAnswers,
     FreeTextQuestionResponse,
     JobPostingRef,
     RunContext,
 )
 from domain.ports import (
-    BrowserSessionPort,
+    BrowserAgentPort,
     ClockPort,
     ConfigProviderPort,
     CredentialRepositoryPort,
@@ -23,11 +22,8 @@ from domain.ports import (
     JobApplicationRepositoryPort,
     LoggerPort,
 )
-from domain.services.account_flow import AccountFlowService
-from domain.services.captcha import CaptchaHandler
 from domain.services.debug import DebugRunManager
 from domain.services.job_application import JobApplicationAgent
-from domain.services.work_authorization import WorkAuthorizationService
 from infra.logs import FileSystemDebugArtifactStore
 
 from .bot_api import TelegramApiError
@@ -35,7 +31,7 @@ from .bot_api import TelegramApiError
 _URL_PATTERN = re.compile(r"https?://\S+", re.IGNORECASE)
 
 
-BrowserFactory = Callable[[], BrowserSessionPort]
+AgentFactory = Callable[[], BrowserAgentPort]
 
 
 class TelegramBot:
@@ -55,7 +51,7 @@ class TelegramBot:
         clock: ClockPort,
         id_generator: IdGeneratorPort,
         logger: LoggerPort,
-        browser_factory: BrowserFactory,
+        agent_factory: AgentFactory,
     ) -> None:
         self._config_provider = config_provider
         self._job_repo = job_repo
@@ -63,7 +59,7 @@ class TelegramBot:
         self._clock = clock
         self._id_generator = id_generator
         self._logger = logger
-        self._browser_factory = browser_factory
+        self._agent_factory = agent_factory
 
         self._offset = 0
         self._last_url: str | None = None
@@ -141,15 +137,12 @@ class TelegramBot:
             if cfg.debug_mode:
                 debug_manager = DebugRunManager(FileSystemDebugArtifactStore())
 
-            agent = JobApplicationAgent(
+            orchestrator = JobApplicationAgent(
                 job_repo=self._job_repo,
                 credential_repo=self._credential_repo,
                 clock=self._clock,
                 id_generator=self._id_generator,
                 logger=self._logger,
-                account_flow=AccountFlowService(),
-                captcha_handler=CaptchaHandler(),
-                work_auth_service=WorkAuthorizationService(),
                 debug_manager=debug_manager,
             )
 
@@ -159,20 +152,16 @@ class TelegramBot:
                 job_url=url,
             )
 
-            browser = self._browser_factory()
-            launch = getattr(browser, "launch", None)
-            if callable(launch):
-                await launch()
+            browser_agent = self._agent_factory()
 
             try:
                 await self._send_message(f"Starting application for {url} ...")
-                record = await agent.apply_to_job(
-                    browser=browser,
+                record = await orchestrator.apply_to_job(
+                    agent=browser_agent,
                     ui=self,
                     job=job,
                     profile=profile,
                     resume_data=resume_data,
-                    common_answers=CommonAnswers(),
                     run_context=run_context,
                 )
                 status_msg = (
@@ -184,7 +173,7 @@ class TelegramBot:
                     status_msg += f"\nReason: {record.failure_reason}"
                 await self._send_message(status_msg)
             finally:
-                close = getattr(browser, "close", None)
+                close = getattr(browser_agent, "close", None)
                 if callable(close):
                     await close()
         except Exception as exc:

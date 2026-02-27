@@ -1,10 +1,12 @@
+"""Thin orchestrator that delegates the real work to the LLM browser agent."""
+
 from __future__ import annotations
 
 from dataclasses import replace
 from datetime import timezone
 
 from domain.models import (
-    CommonAnswers,
+    AgentTask,
     JobApplicationRecord,
     JobApplicationStatus,
     JobPostingRef,
@@ -13,7 +15,7 @@ from domain.models import (
     UserProfile,
 )
 from domain.ports import (
-    BrowserSessionPort,
+    BrowserAgentPort,
     ClockPort,
     CredentialRepositoryPort,
     IdGeneratorPort,
@@ -21,14 +23,16 @@ from domain.ports import (
     LoggerPort,
     UserInteractionPort,
 )
-from domain.services.account_flow import AccountFlowService
-from domain.services.captcha import CaptchaHandler
 from domain.services.debug import DebugRunManager
-from domain.services.work_authorization import WorkAuthorizationService
 
 
 class JobApplicationAgent:
-    """Orchestrates one complete job application attempt."""
+    """Orchestrates one complete job application attempt.
+
+    All browser interaction decisions are made by the LLM agent;
+    this class handles bookkeeping (records, credentials, debug
+    metadata) around the agent execution.
+    """
 
     def __init__(
         self,
@@ -38,9 +42,6 @@ class JobApplicationAgent:
         clock: ClockPort,
         id_generator: IdGeneratorPort,
         logger: LoggerPort,
-        account_flow: AccountFlowService,
-        captcha_handler: CaptchaHandler,
-        work_auth_service: WorkAuthorizationService,
         debug_manager: DebugRunManager | None = None,
     ) -> None:
         self._job_repo = job_repo
@@ -48,20 +49,16 @@ class JobApplicationAgent:
         self._clock = clock
         self._id_generator = id_generator
         self._logger = logger
-        self._account_flow = account_flow
-        self._captcha_handler = captcha_handler
-        self._work_auth_service = work_auth_service
         self._debug_manager = debug_manager
 
     async def apply_to_job(
         self,
         *,
-        browser: BrowserSessionPort,
+        agent: BrowserAgentPort,
         ui: UserInteractionPort,
         job: JobPostingRef,
         profile: UserProfile,
         resume_data: ResumeData,
-        common_answers: CommonAnswers,
         run_context: RunContext,
     ) -> JobApplicationRecord:
         started_at = self._clock.now().astimezone(timezone.utc)
@@ -74,64 +71,50 @@ class JobApplicationAgent:
             debug_run_id=run_context.run_id if run_context.is_debug else None,
         )
         self._job_repo.add(record)
+
         if self._debug_manager is not None:
             self._debug_manager.start(run_context)
 
+        task = AgentTask(
+            objective=f"Apply to {job.company_name} - {job.job_title} at {job.job_url}",
+            context={
+                "profile": {
+                    "full_name": profile.full_name,
+                    "email": profile.email,
+                    "phone": profile.phone,
+                    "address": profile.address,
+                },
+                "job_url": job.job_url,
+                "company": job.company_name,
+                "job_title": job.job_title,
+                "resume_available": bool(resume_data.primary_resume_path),
+                "cover_letter_available": bool(resume_data.cover_letter_paths),
+            },
+            max_steps=50,
+            debug=run_context.is_debug,
+        )
+
         try:
-            await browser.goto(job.job_url)
-            await browser.wait_for_load()
-            await self._capture_debug_step(run_context, browser, "page_loaded")
-
-            if await browser.detect_oauth_only_login():
-                await self._capture_debug_step(run_context, browser, "oauth_only_detected")
-                result = await self._finalize_failure(
-                    record, ui, "OAuth-only login cannot be automated",
-                )
-                self._write_run_metadata(run_context, job, started_at, result)
-                return result
-
-            await self._account_flow.ensure_access(
-                browser=browser,
-                ui=ui,
-                job=job,
-                profile=profile,
-                credential_repo=self._credential_repo,
-                id_generator=self._id_generator,
-                clock=self._clock,
+            result = await agent.execute_task(task)
+        except Exception as exc:
+            self._logger.error(
+                "agent_execution_failed",
+                job_url=job.job_url,
+                error=str(exc),
             )
-            await self._capture_debug_step(run_context, browser, "account_flow")
+            failed = replace(
+                record,
+                status=JobApplicationStatus.FAILED,
+                failure_reason=str(exc),
+            )
+            self._job_repo.update(failed)
+            await ui.send_info(
+                f"Failed to apply for {job.company_name}. Reason: {exc}",
+            )
+            self._write_run_metadata(run_context, job, started_at, failed)
+            return failed
 
-            await self._fill_common_fields(browser, profile, resume_data, common_answers)
-            await self._work_auth_service.answer_questions(browser, ui)
-            await self._fill_personal_questions(browser, ui)
-            await self._capture_debug_step(run_context, browser, "form_filled")
-
-            captcha_result = await self._captcha_handler.handle_if_present(browser, ui)
-            if not captcha_result.solved:
-                await self._capture_debug_step(run_context, browser, "captcha_failed")
-                result = await self._finalize_failure(
-                    record, ui, captcha_result.failure_reason or "Captcha handling failed",
-                )
-                self._write_run_metadata(run_context, job, started_at, result)
-                return result
-            await self._capture_debug_step(run_context, browser, "captcha_done")
-
-            await self._capture_debug_step(run_context, browser, "pre_submit")
-
-            if run_context.is_debug:
-                skipped = replace(
-                    record,
-                    status=JobApplicationStatus.SKIPPED,
-                    failure_reason="Debug mode enabled: final submit skipped",
-                )
-                self._job_repo.update(skipped)
-                await ui.send_info(
-                    f"[DEBUG] Prepared application for {job.company_name} but skipped final submit.",
-                )
-                self._write_run_metadata(run_context, job, started_at, skipped)
-                return skipped
-
-            await browser.click_button("Apply")
+        if result.status == "success":
             applied = replace(
                 record,
                 status=JobApplicationStatus.APPLIED,
@@ -143,74 +126,32 @@ class JobApplicationAgent:
             )
             self._write_run_metadata(run_context, job, started_at, applied)
             return applied
-        except Exception as exc:
-            self._logger.error(
-                "job_application_failed",
-                job_url=job.job_url,
-                company_name=job.company_name,
-                error=str(exc),
-            )
-            await self._capture_debug_step(run_context, browser, "failure_snapshot")
-            result = await self._finalize_failure(record, ui, str(exc))
-            self._write_run_metadata(run_context, job, started_at, result)
-            return result
 
-    async def _finalize_failure(
-        self,
-        record: JobApplicationRecord,
-        ui: UserInteractionPort,
-        reason: str,
-    ) -> JobApplicationRecord:
-        failed = replace(record, status=JobApplicationStatus.FAILED, failure_reason=reason)
+        if result.status == "skipped":
+            skipped = replace(
+                record,
+                status=JobApplicationStatus.SKIPPED,
+                failure_reason=result.reason or "Debug mode: final submit skipped",
+            )
+            self._job_repo.update(skipped)
+            await ui.send_info(
+                f"[DEBUG] Prepared application for {job.company_name} but skipped final submit.",
+            )
+            self._write_run_metadata(run_context, job, started_at, skipped)
+            return skipped
+
+        # "failed" or any other status
+        failed = replace(
+            record,
+            status=JobApplicationStatus.FAILED,
+            failure_reason=result.reason or "Agent reported failure",
+        )
         self._job_repo.update(failed)
         await ui.send_info(
-            f"Failed to apply for {record.company_name} - {record.job_title}. Reason: {reason}",
+            f"Failed to apply for {job.company_name}. Reason: {result.reason}",
         )
+        self._write_run_metadata(run_context, job, started_at, failed)
         return failed
-
-    async def _fill_common_fields(
-        self,
-        browser: BrowserSessionPort,
-        profile: UserProfile,
-        resume_data: ResumeData,
-        common_answers: CommonAnswers,
-    ) -> None:
-        await browser.fill_input("full_name", profile.full_name)
-        await browser.fill_input("email", profile.email)
-        if profile.phone:
-            await browser.fill_input("phone", profile.phone)
-        if profile.address:
-            await browser.fill_input("address", profile.address)
-
-        await browser.upload_file("resume", resume_data.primary_resume_path)
-
-        salary = common_answers.get("salary_expectation")
-        if salary:
-            await browser.fill_input("salary_expectation", salary)
-
-    async def _fill_personal_questions(
-        self,
-        browser: BrowserSessionPort,
-        ui: UserInteractionPort,
-    ) -> None:
-        question_provider = getattr(browser, "list_personal_questions", None)
-        if not callable(question_provider):
-            return
-
-        questions = await question_provider()
-        for item in questions:
-            response = await ui.ask_free_text(item["id"], item["prompt"])
-            await browser.fill_input(item["id"], response.text.strip())
-
-    async def _capture_debug_step(
-        self,
-        run_context: RunContext,
-        browser: BrowserSessionPort,
-        step_name: str,
-    ) -> None:
-        if self._debug_manager is None:
-            return
-        await self._debug_manager.capture_step(run_context, browser, step_name)
 
     def _write_run_metadata(
         self,

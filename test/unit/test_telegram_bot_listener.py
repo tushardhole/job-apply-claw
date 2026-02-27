@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timezone
 from typing import Any
-from unittest.mock import AsyncMock
 
-from domain.models import AppConfig, JobApplicationStatus, UserProfile
+from domain.models import (
+    AgentResult,
+    AgentTask,
+    AppConfig,
+    JobApplicationStatus,
+    UserProfile,
+)
 from infra.telegram.bot_listener import TelegramBot
 from test.mocks import (
-    FakeBrowserSession,
     FixedClock,
     InMemoryConfigProvider,
     InMemoryCredentialRepository,
@@ -17,42 +22,22 @@ from test.mocks import (
     SequentialIdGenerator,
 )
 
-from datetime import datetime, timezone
+
+# -- Fake agent for bot tests -----------------------------------------------
 
 
-def _make_bot(
-    *,
-    debug_mode: bool = False,
-    browser: FakeBrowserSession | None = None,
-) -> tuple[TelegramBot, _FakeTelegramTransport, InMemoryJobApplicationRepository]:
-    config = AppConfig(
-        bot_token="tok",
-        telegram_chat_id="42",
-        openai_key="sk",
-        openai_base_url="https://api.test/v1",
-        debug_mode=debug_mode,
-    )
-    profile = UserProfile(full_name="Test", email="t@t.com", phone="+1", address="123 St")
-    provider = InMemoryConfigProvider(config=config, profile=profile)
-    job_repo = InMemoryJobApplicationRepository()
-    cred_repo = InMemoryCredentialRepository()
-    clock = FixedClock(datetime(2025, 6, 1, tzinfo=timezone.utc))
-    id_gen = SequentialIdGenerator()
-    logger = InMemoryLogger()
-    b = browser or FakeBrowserSession()
+class _FakeAgentForBot:
+    """Returns a pre-configured AgentResult."""
 
-    bot = TelegramBot(
-        config_provider=provider,
-        job_repo=job_repo,
-        credential_repo=cred_repo,
-        clock=clock,
-        id_generator=id_gen,
-        logger=logger,
-        browser_factory=lambda: b,
-    )
+    def __init__(self, status: str = "success", reason: str | None = None) -> None:
+        self._status = status
+        self._reason = reason
 
-    transport = _FakeTelegramTransport(bot)
-    return bot, transport, job_repo
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        return AgentResult(status=self._status, reason=self._reason)
+
+
+# -- Fake transport ----------------------------------------------------------
 
 
 class _FakeTelegramTransport:
@@ -76,7 +61,6 @@ class _FakeTelegramTransport:
         })
 
     def install(self) -> None:
-        """Monkey-patch the bot's transport methods for test isolation."""
         if self._installed:
             return
         self._installed = True
@@ -97,12 +81,51 @@ class _FakeTelegramTransport:
         self._bot._send_photo = fake_send_photo  # type: ignore[attr-defined]
 
     async def process_update(self, text: str) -> None:
-        """Simulate a user sending a message to the bot."""
         self.install()
         self.enqueue_user_message(text)
         updates = await self._bot._get_updates()
         for update in updates:
             await self._bot._handle_update(update)
+
+
+# -- Factory -----------------------------------------------------------------
+
+
+def _make_bot(
+    *,
+    debug_mode: bool = False,
+    agent_status: str = "success",
+) -> tuple[TelegramBot, _FakeTelegramTransport, InMemoryJobApplicationRepository]:
+    config = AppConfig(
+        bot_token="tok",
+        telegram_chat_id="42",
+        openai_key="sk",
+        openai_base_url="https://api.test/v1",
+        debug_mode=debug_mode,
+    )
+    profile = UserProfile(full_name="Test", email="t@t.com", phone="+1", address="123 St")
+    provider = InMemoryConfigProvider(config=config, profile=profile)
+    job_repo = InMemoryJobApplicationRepository()
+    cred_repo = InMemoryCredentialRepository()
+    clock = FixedClock(datetime(2025, 6, 1, tzinfo=timezone.utc))
+    id_gen = SequentialIdGenerator()
+    logger = InMemoryLogger()
+
+    status = "skipped" if debug_mode else agent_status
+    reason = "Debug mode: final submit skipped" if debug_mode else None
+
+    bot = TelegramBot(
+        config_provider=provider,
+        job_repo=job_repo,
+        credential_repo=cred_repo,
+        clock=clock,
+        id_generator=id_gen,
+        logger=logger,
+        agent_factory=lambda: _FakeAgentForBot(status=status, reason=reason),
+    )
+
+    transport = _FakeTelegramTransport(bot)
+    return bot, transport, job_repo
 
 
 # -- command tests ----------------------------------------------------------
@@ -113,9 +136,7 @@ def test_url_message_stores_url() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("https://jobs.example.com/apply/123"))
-
     assert bot._last_url == "https://jobs.example.com/apply/123"
     assert any("URL received" in m for m in transport.sent_messages)
 
@@ -125,9 +146,7 @@ def test_apply_without_url_warns_user() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("/apply"))
-
     assert any("No URL stored" in m for m in transport.sent_messages)
 
 
@@ -136,9 +155,7 @@ def test_help_command_returns_usage() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("/help"))
-
     assert any("/apply" in m and "/status" in m for m in transport.sent_messages)
 
 
@@ -147,9 +164,7 @@ def test_status_with_no_records() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("/status"))
-
     assert any("No applications" in m for m in transport.sent_messages)
 
 
@@ -158,9 +173,7 @@ def test_debug_command_shows_status() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("/debug"))
-
     assert any("ON" in m for m in transport.sent_messages)
 
 
@@ -169,18 +182,15 @@ def test_unrecognized_message() -> None:
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
-
     asyncio.run(transport.process_update("hello world"))
-
     assert any("Unrecognized" in m for m in transport.sent_messages)
 
 
 # -- apply flow tests -------------------------------------------------------
 
 
-def test_apply_runs_guest_flow_and_reports_result() -> None:
-    browser = FakeBrowserSession(login_required=False, guest_apply_available=True)
-    bot, transport, job_repo = _make_bot(browser=browser)
+def test_apply_runs_agent_and_reports_result() -> None:
+    bot, transport, job_repo = _make_bot()
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
@@ -198,8 +208,7 @@ def test_apply_runs_guest_flow_and_reports_result() -> None:
 
 
 def test_apply_debug_mode_skips_submit() -> None:
-    browser = FakeBrowserSession(login_required=False, guest_apply_available=True)
-    bot, transport, job_repo = _make_bot(debug_mode=True, browser=browser)
+    bot, transport, job_repo = _make_bot(debug_mode=True)
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
@@ -213,12 +222,10 @@ def test_apply_debug_mode_skips_submit() -> None:
     records = job_repo.list_all()
     assert len(records) == 1
     assert records[0].status is JobApplicationStatus.SKIPPED
-    assert "Apply" not in browser.clicked_buttons
 
 
 def test_status_shows_applied_jobs() -> None:
-    browser = FakeBrowserSession()
-    bot, transport, job_repo = _make_bot(browser=browser)
+    bot, transport, job_repo = _make_bot()
     transport.install()
     bot._chat_id = "42"
     bot._bot_token = "tok"
@@ -230,7 +237,6 @@ def test_status_shows_applied_jobs() -> None:
         await transport.process_update("/status")
 
     asyncio.run(run())
-
     assert any("Acme" in m for m in transport.sent_messages)
 
 
@@ -247,7 +253,6 @@ def test_url_clears_after_apply() -> None:
         await transport.process_update("/apply")
 
     asyncio.run(run())
-
     assert any("No URL stored" in m for m in transport.sent_messages)
 
 

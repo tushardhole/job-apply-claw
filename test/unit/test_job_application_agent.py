@@ -1,19 +1,26 @@
+"""Unit tests for the refactored JobApplicationAgent.
+
+The agent now delegates to BrowserAgentPort (LLM browser agent).
+Tests use ScriptedLLMClient + FakeBrowserTools via a thin FakeAgent.
+"""
+
 from __future__ import annotations
 
 import asyncio
 from datetime import datetime, timezone
 
-from domain.models import CommonAnswers, JobApplicationStatus, JobPostingRef, ResumeData, RunContext, UserProfile
-from domain.services import (
-    AccountFlowService,
-    CaptchaHandler,
-    DebugRunManager,
-    JobApplicationAgent,
-    WorkAuthorizationQuestion,
-    WorkAuthorizationService,
+from domain.models import (
+    AgentResult,
+    AgentStep,
+    AgentTask,
+    JobApplicationStatus,
+    JobPostingRef,
+    ResumeData,
+    RunContext,
+    UserProfile,
 )
+from domain.services import DebugRunManager, JobApplicationAgent
 from test.mocks import (
-    FakeBrowserSession,
     FakeUserInteraction,
     FixedClock,
     InMemoryCredentialRepository,
@@ -24,25 +31,43 @@ from test.mocks import (
 )
 
 
-def _build_agent(debug_store: InMemoryDebugArtifactStore | None = None) -> tuple[JobApplicationAgent, InMemoryJobApplicationRepository, InMemoryCredentialRepository]:
+class _FakeAgent:
+    """Inline BrowserAgentPort that returns a pre-configured result."""
+
+    def __init__(self, result: AgentResult) -> None:
+        self._result = result
+        self.executed_task: AgentTask | None = None
+
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        self.executed_task = task
+        return self._result
+
+
+class _FailingAgent:
+    """Agent that raises an exception."""
+
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        raise RuntimeError("Browser crashed")
+
+
+def _build(
+    debug_store: InMemoryDebugArtifactStore | None = None,
+) -> tuple[JobApplicationAgent, InMemoryJobApplicationRepository, InMemoryCredentialRepository]:
     job_repo = InMemoryJobApplicationRepository()
     cred_repo = InMemoryCredentialRepository()
-    debug_manager = DebugRunManager(debug_store) if debug_store is not None else None
-    agent = JobApplicationAgent(
+    debug_manager = DebugRunManager(debug_store) if debug_store else None
+    orchestrator = JobApplicationAgent(
         job_repo=job_repo,
         credential_repo=cred_repo,
         clock=FixedClock(datetime(2025, 1, 1, tzinfo=timezone.utc)),
         id_generator=SequentialIdGenerator(),
         logger=InMemoryLogger(),
-        account_flow=AccountFlowService(),
-        captcha_handler=CaptchaHandler(),
-        work_auth_service=WorkAuthorizationService(),
         debug_manager=debug_manager,
     )
-    return agent, job_repo, cred_repo
+    return orchestrator, job_repo, cred_repo
 
 
-def _default_payload() -> tuple[JobPostingRef, UserProfile, ResumeData, CommonAnswers]:
+def _defaults() -> tuple[JobPostingRef, UserProfile, ResumeData]:
     return (
         JobPostingRef(
             company_name="Acme",
@@ -52,147 +77,120 @@ def _default_payload() -> tuple[JobPostingRef, UserProfile, ResumeData, CommonAn
         ),
         UserProfile(full_name="Ada Lovelace", email="ada@example.com", phone="123"),
         ResumeData(primary_resume_path="/tmp/resume.pdf"),
-        CommonAnswers(answers={"salary_expectation": "120000"}),
     )
 
 
-def test_guest_happy_path_submits_application() -> None:
-    agent, repo, _ = _build_agent()
-    browser = FakeBrowserSession(login_required=False, guest_apply_available=True)
+def test_success_flow() -> None:
+    orchestrator, repo, _ = _build()
+    job, profile, resume = _defaults()
+    fake_agent = _FakeAgent(AgentResult(status="success"))
     ui = FakeUserInteraction()
-    job, profile, resume_data, common_answers = _default_payload()
 
-    async def main() -> None:
-        record = await agent.apply_to_job(
-            browser=browser,
+    async def run() -> None:
+        record = await orchestrator.apply_to_job(
+            agent=fake_agent,
             ui=ui,
             job=job,
             profile=profile,
-            resume_data=resume_data,
-            common_answers=common_answers,
-            run_context=RunContext(run_id="run-1", is_debug=False),
+            resume_data=resume,
+            run_context=RunContext(run_id="r1"),
         )
         assert record.status is JobApplicationStatus.APPLIED
         assert record.applied_at is not None
 
-    asyncio.run(main())
-    saved = repo.list_all()[0]
-    assert saved.status is JobApplicationStatus.APPLIED
-    assert browser.uploaded_files["resume"] == "/tmp/resume.pdf"
-    assert "Apply" in browser.clicked_buttons
-    assert any("Application submitted" in message for message in ui.info_messages)
+    asyncio.run(run())
+    assert repo.list_all()[0].status is JobApplicationStatus.APPLIED
+    assert any("submitted" in m.lower() for m in ui.info_messages)
 
 
-def test_oauth_only_flow_fails_cleanly() -> None:
-    agent, repo, _ = _build_agent()
-    browser = FakeBrowserSession(oauth_only_login=True)
-    ui = FakeUserInteraction()
-    job, profile, resume_data, common_answers = _default_payload()
-
-    async def main() -> None:
-        record = await agent.apply_to_job(
-            browser=browser,
-            ui=ui,
-            job=job,
-            profile=profile,
-            resume_data=resume_data,
-            common_answers=common_answers,
-            run_context=RunContext(run_id="run-2", is_debug=False),
-        )
-        assert record.status is JobApplicationStatus.FAILED
-        assert "OAuth-only" in (record.failure_reason or "")
-
-    asyncio.run(main())
-    assert repo.list_all()[0].status is JobApplicationStatus.FAILED
-
-
-def test_login_required_creates_account_and_stores_credentials() -> None:
-    agent, _, cred_repo = _build_agent()
-    browser = FakeBrowserSession(login_required=True, guest_apply_available=False)
-    ui = FakeUserInteraction()
-    job, profile, resume_data, common_answers = _default_payload()
-
-    async def main() -> None:
-        await agent.apply_to_job(
-            browser=browser,
-            ui=ui,
-            job=job,
-            profile=profile,
-            resume_data=resume_data,
-            common_answers=common_answers,
-            run_context=RunContext(run_id="run-3", is_debug=False),
-        )
-
-    asyncio.run(main())
-    creds = cred_repo.list_all()
-    assert len(creds) == 1
-    assert creds[0].email == "ada@example.com"
-    assert "Create Account" in browser.clicked_buttons
-
-
-def test_work_authorization_and_personal_questions_ask_user() -> None:
-    agent, _, _ = _build_agent()
-    browser = FakeBrowserSession(
-        work_auth_questions=[
-            WorkAuthorizationQuestion(
-                question_id="work_auth_us",
-                prompt="Are you authorized to work in the US?",
-                options=["Yes", "No"],
-            )
-        ],
-        personal_questions=[
-            {"id": "proud_project", "prompt": "Tell us about a project you are proud of."}
-        ],
-    )
-    ui = FakeUserInteraction(
-        free_text_answers={"proud_project": "I built a resilient data pipeline."},
-        choice_answers={"work_auth_us": ["Yes"]},
-    )
-    job, profile, resume_data, common_answers = _default_payload()
-
-    async def main() -> None:
-        await agent.apply_to_job(
-            browser=browser,
-            ui=ui,
-            job=job,
-            profile=profile,
-            resume_data=resume_data,
-            common_answers=common_answers,
-            run_context=RunContext(run_id="run-4", is_debug=False),
-        )
-
-    asyncio.run(main())
-    assert browser.selected_options["work_auth_us"] == "Yes"
-    assert browser.filled_inputs["proud_project"] == "I built a resilient data pipeline."
-
-
-def test_debug_mode_skips_final_submit_and_captures_screenshots() -> None:
+def test_skipped_flow_debug_mode() -> None:
     debug_store = InMemoryDebugArtifactStore()
-    agent, repo, _ = _build_agent(debug_store=debug_store)
-    browser = FakeBrowserSession()
+    orchestrator, repo, _ = _build(debug_store=debug_store)
+    job, profile, resume = _defaults()
+    fake_agent = _FakeAgent(AgentResult(
+        status="skipped",
+        reason="Debug mode: final submit skipped",
+    ))
     ui = FakeUserInteraction()
-    job, profile, resume_data, common_answers = _default_payload()
 
-    async def main() -> None:
-        record = await agent.apply_to_job(
-            browser=browser,
+    async def run() -> None:
+        record = await orchestrator.apply_to_job(
+            agent=fake_agent,
             ui=ui,
             job=job,
             profile=profile,
-            resume_data=resume_data,
-            common_answers=common_answers,
-            run_context=RunContext(run_id="run-5", is_debug=True),
+            resume_data=resume,
+            run_context=RunContext(run_id="r2", is_debug=True),
         )
         assert record.status is JobApplicationStatus.SKIPPED
 
-    asyncio.run(main())
-    saved = repo.list_all()[0]
-    assert saved.status is JobApplicationStatus.SKIPPED
-    assert "Apply" not in browser.clicked_buttons
-    assert len(debug_store.saved) >= 3
-    step_names = [s[1] for s in debug_store.saved]
-    assert "pre_submit" in step_names
+    asyncio.run(run())
+    assert repo.list_all()[0].status is JobApplicationStatus.SKIPPED
+    assert any("skipped" in m.lower() for m in ui.info_messages)
     assert len(debug_store.metadata) == 1
-    meta = debug_store.metadata[0][1]
-    assert meta["outcome"] == "skipped"
-    assert meta["mode"] == "debug"
+    assert debug_store.metadata[0][1]["outcome"] == "skipped"
+
+
+def test_failed_flow() -> None:
+    orchestrator, repo, _ = _build()
+    job, profile, resume = _defaults()
+    fake_agent = _FakeAgent(AgentResult(status="failed", reason="Image captcha"))
+    ui = FakeUserInteraction()
+
+    async def run() -> None:
+        record = await orchestrator.apply_to_job(
+            agent=fake_agent,
+            ui=ui,
+            job=job,
+            profile=profile,
+            resume_data=resume,
+            run_context=RunContext(run_id="r3"),
+        )
+        assert record.status is JobApplicationStatus.FAILED
+        assert record.failure_reason == "Image captcha"
+
+    asyncio.run(run())
+
+
+def test_agent_exception_records_failure() -> None:
+    orchestrator, repo, _ = _build()
+    job, profile, resume = _defaults()
+    ui = FakeUserInteraction()
+
+    async def run() -> None:
+        record = await orchestrator.apply_to_job(
+            agent=_FailingAgent(),
+            ui=ui,
+            job=job,
+            profile=profile,
+            resume_data=resume,
+            run_context=RunContext(run_id="r4"),
+        )
+        assert record.status is JobApplicationStatus.FAILED
+        assert "Browser crashed" in (record.failure_reason or "")
+
+    asyncio.run(run())
+
+
+def test_task_context_includes_profile_and_job() -> None:
+    orchestrator, _, _ = _build()
+    job, profile, resume = _defaults()
+    fake_agent = _FakeAgent(AgentResult(status="success"))
+
+    async def run() -> None:
+        await orchestrator.apply_to_job(
+            agent=fake_agent,
+            ui=FakeUserInteraction(),
+            job=job,
+            profile=profile,
+            resume_data=resume,
+            run_context=RunContext(run_id="r5"),
+        )
+
+    asyncio.run(run())
+    task = fake_agent.executed_task
+    assert task is not None
+    assert task.context["profile"]["full_name"] == "Ada Lovelace"
+    assert task.context["job_url"] == "https://example.test/jobs/1"
+    assert task.context["company"] == "Acme"
+    assert task.context["resume_available"] is True
