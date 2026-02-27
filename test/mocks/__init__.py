@@ -3,6 +3,7 @@ Reusable fakes and in-memory implementations for tests.
 """
 
 from .fake_browser_session import FakeBrowserSession
+from .fake_browser_tools import FakeBrowserTools
 from .fake_config_provider import InMemoryConfigProvider
 from .fake_config_repository import InMemoryConfigRepository
 from .fake_credential_repository import InMemoryCredentialRepository
@@ -15,9 +16,11 @@ from .fake_runtime import (
     SequentialIdGenerator,
 )
 from .fake_user_interaction import FakeUserInteraction
+from .scripted_llm_client import ScriptedLLMClient
 
 __all__ = [
     "FakeBrowserSession",
+    "FakeBrowserTools",
     "FakeUserInteraction",
     "InMemoryConfigProvider",
     "InMemoryOnboardingRepository",
@@ -28,5 +31,6 @@ __all__ = [
     "SequentialIdGenerator",
     "InMemoryLogger",
     "InMemoryDebugArtifactStore",
+    "ScriptedLLMClient",
 ]
 
