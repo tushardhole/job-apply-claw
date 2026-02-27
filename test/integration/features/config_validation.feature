@@ -32,3 +32,29 @@ Feature: Config Validation
     Given a config folder with config.json missing "OPENAI_KEY"
     When the config is validated
     Then validation reports an error containing "missing keys"
+
+  Scenario: Placeholder BOT_TOKEN is detected
+    Given a config folder with BOT_TOKEN set to "YOUR_TELEGRAM_BOT_TOKEN"
+    When the config is validated
+    Then validation reports an error containing "BOT_TOKEN is a placeholder"
+
+  Scenario: Non-numeric chat ID is detected
+    Given a config folder with TELEGRAM_CHAT_ID set to "not-a-number"
+    When the config is validated
+    Then validation reports an error containing "TELEGRAM_CHAT_ID must be numeric"
+
+  Scenario: Placeholder email in profile is detected
+    Given a config folder with profile email set to "your@email.com"
+    When the config is validated
+    Then validation reports an error containing "email is a placeholder"
+
+  Scenario: Successful connectivity check
+    Given a valid config with working API keys
+    When connectivity is validated with mock success
+    Then connectivity passes
+    And the bot username is "test_bot"
+
+  Scenario: Failed Telegram connectivity
+    Given a valid config with working API keys
+    When connectivity is validated with Telegram failure
+    Then connectivity reports an error containing "BOT_TOKEN"

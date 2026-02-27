@@ -1,0 +1,7 @@
+{
+  "BOT_TOKEN": "YOUR_TELEGRAM_BOT_TOKEN",
+  "TELEGRAM_CHAT_ID": "YOUR_CHAT_ID",
+  "OPENAI_KEY": "sk-YOUR_OPENAI_KEY",
+  "OPENAI_BASE_URL": "https://api.openai.com/v1",
+  "debug_mode": true
+}
