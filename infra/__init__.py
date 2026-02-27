@@ -1,6 +1,7 @@
 """Infrastructure adapters – concrete implementations of domain ports."""
 
 from .browser import MockBrowserSession, PlaywrightBrowserSession
+from .config import FileSystemConfigProvider
 from .interaction import ConsoleUserInteraction
 from .logs import FileSystemDebugArtifactStore
 from .persistence import (
@@ -15,6 +16,7 @@ from .telegram import TelegramBotConfig, TelegramUserInteraction
 __all__ = [
     "PlaywrightBrowserSession",
     "MockBrowserSession",
+    "FileSystemConfigProvider",
     "ConsoleUserInteraction",
     "FileSystemDebugArtifactStore",
     "SQLiteConfigRepository",
