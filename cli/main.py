@@ -5,16 +5,13 @@ import asyncio
 from datetime import timezone
 from typing import Sequence
 
-from domain.models import CommonAnswers, JobPostingRef, RunContext
-from domain.services import (
-    AccountFlowService,
-    CaptchaHandler,
-    DebugRunManager,
-    JobApplicationAgent,
-    OnboardingService,
-    WorkAuthorizationService,
-)
+from domain.models import JobPostingRef, ResumeData, RunContext
+from domain.services import DebugRunManager, JobApplicationAgent, OnboardingService
+from infra.agent import BrowserAgent
+from infra.browser import PlaywrightBrowserTools
+from infra.config import FileSystemConfigProvider
 from infra.interaction import ConsoleUserInteraction
+from infra.llm import OpenAIToolCallingClient
 from infra.logs import FileSystemDebugArtifactStore
 from infra.persistence import (
     SQLiteConfigRepository,
@@ -23,9 +20,7 @@ from infra.persistence import (
     SQLiteOnboardingRepository,
 )
 from infra.runtime import StructuredLogger, SystemClock, UuidIdGenerator
-from infra.telegram import TelegramBotConfig, TelegramUserInteraction
-from infra.config import FileSystemConfigProvider
-from infra.telegram import TelegramBot
+from infra.telegram import TelegramBot, TelegramBotConfig, TelegramUserInteraction
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -35,7 +30,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     start_p = sub.add_parser("start", help="Start the Telegram bot listener")
     start_p.add_argument("--config-dir", default="./config", help="Path to config folder")
-    start_p.add_argument("--browser", choices=["mock", "playwright"], default="playwright")
     start_p.add_argument("--headless", action="store_true", default=True)
     start_p.add_argument("--no-headless", dest="headless", action="store_false")
     start_p.add_argument(
@@ -50,20 +44,12 @@ def build_parser() -> argparse.ArgumentParser:
     apply_p.add_argument("job_url")
     apply_p.add_argument("--company", required=True)
     apply_p.add_argument("--title", required=True)
-    apply_p.add_argument("--board-type", default="unknown")
+    apply_p.add_argument("--config-dir", default="./config")
     apply_p.add_argument("--debug", action="store_true")
     apply_p.add_argument("--debug-artifacts-dir", default="logs")
     apply_p.add_argument("--interaction", choices=["console", "telegram"], default="console")
-    apply_p.add_argument("--browser", choices=["mock", "playwright"], default="mock")
     apply_p.add_argument("--headless", action="store_true", default=True)
     apply_p.add_argument("--no-headless", dest="headless", action="store_false")
-    apply_p.add_argument("--mock-login-required", action="store_true")
-    apply_p.add_argument("--mock-guest-apply", action="store_true")
-    apply_p.add_argument("--mock-captcha-text", action="store_true")
-    apply_p.add_argument("--mock-captcha-image", action="store_true")
-    apply_p.add_argument("--mock-oauth-only", action="store_true")
-    apply_p.add_argument("--mock-otp-required", action="store_true")
-    apply_p.add_argument("--mock-account-exists", action="store_true")
 
     sub.add_parser("list-applied")
     sub.add_parser("list-credentials")
@@ -120,7 +106,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.command == "apply-url":
-        return _handle_apply(args, onboarding_repo, config_repo, job_repo, credential_repo, logger, clock, ids)
+        return _handle_apply(args, job_repo, credential_repo, logger, clock, ids)
 
     raise SystemExit(f"Unsupported command: {args.command}")
 
@@ -163,12 +149,20 @@ def _handle_start(
 
     print("Starting Telegram bot listener...")
 
-    def _make_browser():
-        if args.browser == "playwright":
-            from infra.browser import PlaywrightBrowserSession
-            return PlaywrightBrowserSession(headless=args.headless)
-        from infra.browser import MockBrowserSession
-        return MockBrowserSession()
+    def _make_agent() -> BrowserAgent:
+        fresh_cfg = config_provider.get_config()
+        llm = OpenAIToolCallingClient(
+            api_key=fresh_cfg.openai_key,
+            base_url=fresh_cfg.openai_base_url,
+        )
+        # PlaywrightBrowserTools will be created per-apply inside the bot
+        # since it needs a Playwright page. The agent_factory creates a
+        # BrowserAgent that the bot will use; the tools must be wired
+        # when a real page is available.
+        # For now, return a BrowserAgent with a placeholder — the real
+        # wiring happens in the TelegramBot._handle_apply once we have
+        # a Playwright page.
+        return BrowserAgent(llm=llm, browser_tools=_PlaceholderTools(), logger=logger)
 
     bot = TelegramBot(
         config_provider=config_provider,
@@ -177,7 +171,7 @@ def _handle_start(
         clock=clock,
         id_generator=ids,
         logger=logger,
-        browser_factory=_make_browser,
+        agent_factory=_make_agent,
     )
     asyncio.run(bot.run())
     return 0
@@ -185,88 +179,95 @@ def _handle_start(
 
 def _handle_apply(
     args: argparse.Namespace,
-    onboarding_repo: SQLiteOnboardingRepository,
-    config_repo: SQLiteConfigRepository,
     job_repo: SQLiteJobApplicationRepository,
     credential_repo: SQLiteCredentialRepository,
     logger: StructuredLogger,
     clock: SystemClock,
     ids: UuidIdGenerator,
 ) -> int:
-    summary = asyncio.run(
-        OnboardingService(
-            repo=onboarding_repo,
-            ui=ConsoleUserInteraction(),
-        ).ensure_onboarding_complete()
-    )
+    config_provider = FileSystemConfigProvider(args.config_dir)
+    errors = config_provider.validate()
+    if errors:
+        print("Config validation failed:")
+        for err in errors:
+            print(f"  - {err}")
+        return 1
+
+    cfg = config_provider.get_config()
+    profile = config_provider.get_profile()
+    resume_data = config_provider.get_resume_data()
+
     if args.interaction == "telegram":
-        token = config_repo.get_config_value("BOT_TOKEN")
-        chat_id = config_repo.get_config_value("TELEGRAM_CHAT_ID")
-        if not token or not chat_id:
-            raise SystemExit("Missing BOT_TOKEN or TELEGRAM_CHAT_ID in config.")
+        token = cfg.bot_token
+        chat_id = cfg.telegram_chat_id
         ui = TelegramUserInteraction(TelegramBotConfig(bot_token=token, chat_id=chat_id))
     else:
         ui = ConsoleUserInteraction()
 
-    browser = _create_browser(args)
     run_context = RunContext(run_id=ids.new_run_id(), is_debug=args.debug)
     artifact_store = FileSystemDebugArtifactStore(base_dir=args.debug_artifacts_dir)
-    agent = JobApplicationAgent(
+
+    orchestrator = JobApplicationAgent(
         job_repo=job_repo,
         credential_repo=credential_repo,
         clock=clock,
         id_generator=ids,
         logger=logger,
-        account_flow=AccountFlowService(),
-        captcha_handler=CaptchaHandler(),
-        work_auth_service=WorkAuthorizationService(),
-        debug_manager=DebugRunManager(artifact_store),
+        debug_manager=DebugRunManager(artifact_store) if args.debug else None,
     )
 
     async def _run() -> int:
-        if hasattr(browser, "launch"):
-            await browser.launch()
-        try:
-            record = await agent.apply_to_job(
-                browser=browser,
+        from playwright.async_api import async_playwright
+
+        async with async_playwright() as pw:
+            browser = await pw.chromium.launch(headless=args.headless)
+            page = await browser.new_page()
+
+            tools = PlaywrightBrowserTools(
+                page=page,
                 ui=ui,
-                job=JobPostingRef(
-                    company_name=args.company,
-                    job_title=args.title,
-                    job_url=args.job_url,
-                    job_board_type=args.board_type,
-                ),
-                profile=summary.profile,
-                resume_data=summary.resume_data,
-                common_answers=summary.common_answers or CommonAnswers(),
-                run_context=run_context,
+                resume_path=config_provider.get_resume_path(),
+                cover_letter_path=config_provider.get_cover_letter_path(),
             )
-            print(f"result={record.status.value} reason={record.failure_reason or '-'}")
-            return 0
-        finally:
-            if hasattr(browser, "close") and callable(browser.close):
+            llm = OpenAIToolCallingClient(
+                api_key=cfg.openai_key,
+                base_url=cfg.openai_base_url,
+            )
+            agent = BrowserAgent(llm=llm, browser_tools=tools, logger=logger)
+
+            try:
+                record = await orchestrator.apply_to_job(
+                    agent=agent,
+                    ui=ui,
+                    job=JobPostingRef(
+                        company_name=args.company,
+                        job_title=args.title,
+                        job_url=args.job_url,
+                    ),
+                    profile=profile,
+                    resume_data=resume_data,
+                    run_context=run_context,
+                )
+                print(f"result={record.status.value} reason={record.failure_reason or '-'}")
+                return 0
+            finally:
                 await browser.close()
 
     return asyncio.run(_run())
 
 
-def _create_browser(args: argparse.Namespace) -> object:
-    if args.browser == "playwright":
-        from infra.browser import PlaywrightBrowserSession
+class _PlaceholderTools:
+    """Placeholder BrowserToolsPort for startup agent factory.
 
-        return PlaywrightBrowserSession(headless=args.headless)
+    The real tools are wired when a Playwright page is available.
+    """
 
-    from infra.browser import MockBrowserSession
+    def available_tools(self):
+        from infra.browser.playwright_tools import TOOL_DEFINITIONS
+        return list(TOOL_DEFINITIONS)
 
-    return MockBrowserSession(
-        login_required=args.mock_login_required,
-        guest_apply_available=args.mock_guest_apply or not args.mock_login_required,
-        captcha_present=args.mock_captcha_text or args.mock_captcha_image,
-        image_captcha=args.mock_captcha_image,
-        oauth_only_login=args.mock_oauth_only,
-        otp_required=args.mock_otp_required,
-        account_already_exists=args.mock_account_exists,
-    )
+    async def execute(self, tool_call):
+        raise RuntimeError("PlaceholderTools cannot execute — real tools not wired yet")
 
 
 if __name__ == "__main__":

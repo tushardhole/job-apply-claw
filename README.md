@@ -1,13 +1,36 @@
 ## Job Apply Claw
 
-Agentic bot that automates job applications using browser automation and Telegram. Send a job URL via Telegram, and the bot fills forms, uploads your resume, handles captchas, creates accounts when needed, and manages the entire flow — while keeping you in the loop for sensitive decisions like salary, work authorization, and personal questions.
+Agentic bot that automates job applications using an **LLM-driven browser agent** and Telegram. Send a job URL via Telegram, and the bot navigates forms, uploads your resume, handles captchas, creates accounts when needed, and manages the entire flow — while keeping you in the loop for sensitive decisions like salary, work authorization, and personal questions.
+
+The LLM (via OpenAI function calling) acts as the "brain" — observing each page, deciding what to click/fill/ask, and executing browser actions through Playwright. No hard-coded heuristics for specific job boards.
+
+### Architecture
+
+```
+┌──────────────────────────────────────────────┐
+│  Telegram / CLI                              │
+│    └── JobApplicationAgent (orchestrator)    │
+│          └── BrowserAgent (LLM loop)         │
+│                ├── LLMClient (OpenAI)        │
+│                └── BrowserTools (Playwright)  │
+└──────────────────────────────────────────────┘
+```
+
+- **BrowserAgent** — core loop: LLM decides → execute tool → feed result back → repeat until `done`
+- **PlaywrightBrowserTools** — 13 tools the LLM can call: `page_snapshot`, `goto`, `click`, `fill`, `select_option`, `upload_file`, `scroll`, `wait`, `screenshot`, `get_current_url`, `ask_user`, `report_status`, `done`
+- **System prompt** — defines static vs dynamic field rules, submit handling, password reset, captcha behaviour, and debug mode
+- **JobApplicationAgent** — thin orchestrator that creates the task, delegates to the agent, and records results
 
 ### Project layout
 
-- `app/` — Application facade for future desktop UI (tabs: applied jobs, credentials, config).
-- `cli/` — Terminal-first CLI commands including the `start` command.
-- `domain/` — Pure business logic (models, ports, services). No external dependencies.
-- `infra/` — Implementations of domain ports (Playwright, Telegram, filesystem config, SQLite, logging).
+- `domain/` — Pure business logic: models, ports, services, prompts. No external dependencies.
+- `infra/agent/` — BrowserAgent core loop implementation.
+- `infra/browser/` — PlaywrightBrowserTools (tool executor), legacy browser session.
+- `infra/llm/` — OpenAIToolCallingClient with function calling support.
+- `infra/telegram/` — Telegram bot listener and user interaction adapter.
+- `infra/config/` — File-based config provider with hot-reload.
+- `cli/` — CLI commands including `start` and `apply-url`.
+- `app/` — Application facade for future desktop UI.
 - `test/` — Unit tests, BDD integration tests (Gherkin), mocks, and fixture files.
 
 ---
@@ -27,7 +50,7 @@ playwright install chromium
 
 #### 2. Set up config folder
 
-Create a `config/` folder in the project root with this structure:
+Create a `config/` folder in the project root (or copy from `config_template/`):
 
 ```
 config/
@@ -58,9 +81,7 @@ config/
   "name": "Your Full Name",
   "email": "your@email.com",
   "phone": "+1234567890",
-  "address": "123 Main St, City, State 12345",
-  "skills": ["Python", "JavaScript", "SQL"],
-  "linkedin_url": "https://linkedin.com/in/yourprofile"
+  "address": "123 Main St, City, State 12345"
 }
 ```
 
@@ -89,90 +110,45 @@ Once valid, the bot connects to Telegram and starts listening.
 3. **Answer questions** — bot asks you for salary, work authorization, OTP, captcha answers, etc.
 4. **Get results** — bot sends confirmation or failure reason
 
-Example conversation:
-
-```
-You:  https://jobs.acme.com/apply/backend-engineer
-Bot:  URL received: https://jobs.acme.com/apply/backend-engineer
-      Send /apply to start.
-
-You:  /apply
-Bot:  Starting application for https://jobs.acme.com/apply/backend-engineer ...
-Bot:  [Question: salary_expectation]
-      What is your salary expectation?
-You:  120000
-Bot:  [Question: work_auth]
-      Are you authorized to work in the US?
-      1. Yes
-      2. No
-      3. Require sponsorship
-You:  Yes
-Bot:  Result: applied
-      Company: Acme
-      URL: https://jobs.acme.com/apply/backend-engineer
-```
-
-Other Telegram commands:
-
-- `/status` — list recent applications
-- `/debug` — show current debug mode status
-- `/help` — show all commands
+Other commands: `/status`, `/debug`, `/help`
 
 ---
 
-### Debug mode
+### How the LLM agent works
 
-Toggle debug mode by setting `"debug_mode": true` in `config/config.json`. Changes take effect on the next `/apply` — no restart needed.
+The system prompt instructs the LLM to:
 
-When debug mode is ON:
-
-1. The bot fills all form fields, uploads resume, handles captchas — everything except the final submit.
-2. **The submit/apply button is NOT clicked.**
-3. Screenshots are saved at every step under `logs/run_<run_id>/`:
-   - `Screenshot_001_page_loaded.png`
-   - `Screenshot_002_account_flow.png`
-   - `Screenshot_003_form_filled.png`
-   - `Screenshot_004_captcha_done.png`
-   - `Screenshot_005_pre_submit.png`
-4. A `run_meta.json` file records run details (company, URL, timestamps, outcome).
-5. The job is recorded with status `SKIPPED`.
-
-Always use debug mode first on a new job board to verify form filling.
-
----
+1. **Fill static fields** (name, email, phone) directly from the profile context
+2. **Ask the user** for any dynamic field — salary, work auth, essays, notice period, relocate willingness
+3. **Handle account access** — prefer guest apply; create accounts; handle forgot-password flows
+4. **Handle captchas** — ask user for text captchas; fail on image captchas
+5. **Distinguish submit types** — click Next/Continue for intermediate steps; only click Submit Application at the end
+6. **Debug mode** — skip the final submit button and report "skipped"
 
 ### What gets auto-filled vs asked per application
 
 | Category | Source | Examples |
 |---|---|---|
-| **Auto-filled from profile.json** | Static config | Name, email, phone, address, resume, cover letter |
-| **Asked via Telegram every time** | User input | Salary expectation, work authorization, visa sponsorship, personal questions, OTP, captcha |
-
-This ensures contextual answers are always fresh and job-specific.
+| **Auto-filled from profile** | Static config | Name, email, phone, address, resume, cover letter |
+| **Asked via Telegram every time** | LLM → ask_user | Salary, work auth, visa, essay questions, notice period, OTP, captcha |
 
 ---
 
-### How flows are handled
+### Password reset flows
 
-| Scenario | Behavior |
-|---|---|
-| Guest apply available | Fills form directly, no account created |
-| Login required | Creates account with your email, stores credentials in DB |
-| OTP / email verification | Asks you for the code via Telegram |
-| Account already exists | Triggers forgot-password flow, asks for reset code |
-| Text captcha | Sends screenshot to you, fills your answer |
-| Image-selection captcha | Aborts with clear message (cannot automate) |
-| OAuth-only (Google/Microsoft) | Aborts with clear message (cannot automate) |
+The agent dynamically handles:
+- **Code-based reset** — asks user for code via Telegram, fills it in
+- **Link-based reset** — asks user for reset link, navigates to it
+- **Post-reset navigation** — detects login page vs dashboard vs job page and continues appropriately
+- **Retries** — re-asks user if code is invalid
 
 ---
 
-### Hot-reloadable config
+### Debug mode
 
-You can edit `config.json` or `profile.json` at any time while the bot is running. Changes are picked up on the next `/apply` command — no restart needed. This includes:
+Toggle `"debug_mode": true` in `config/config.json`. Changes take effect on the next `/apply`.
 
-- Toggling `debug_mode` on/off
-- Updating API keys
-- Changing your email, phone, or address
+When ON: the agent fills all fields, navigates all steps, but skips the final Submit button. The job is recorded as `SKIPPED`.
 
 ---
 
@@ -181,27 +157,26 @@ You can edit `config.json` or `profile.json` at any time while the bot is runnin
 | Command | Description |
 |---|---|
 | `start` | Start the Telegram bot listener |
-| `onboard` | Legacy interactive onboarding (profile, resume, common answers) |
 | `apply-url <url>` | Apply to a job URL directly from CLI |
+| `onboard` | Legacy interactive onboarding |
 | `list-applied` | Show all applied jobs |
-| `list-credentials` | Show stored account credentials (passwords masked) |
-| `config get <key>` | Read a config value from SQLite |
-| `config set <key> <value>` | Write a config value to SQLite |
+| `list-credentials` | Show stored account credentials |
+| `config get/set` | Read/write SQLite config values |
 
 #### `start` flags
 
 | Flag | Default | Description |
 |---|---|---|
 | `--config-dir` | `./config` | Path to config folder |
-| `--browser` | `playwright` | Browser backend: `mock` or `playwright` |
 | `--headless` / `--no-headless` | headless | Run browser visibly with `--no-headless` |
+| `--skip-connectivity` | false | Skip API connectivity checks on startup |
 
 ---
 
 ### Run tests
 
 ```bash
-# All tests (unit + BDD integration)
+# All tests (217 total: unit + BDD integration)
 pytest
 
 # Unit tests only
@@ -211,19 +186,20 @@ pytest test/unit/
 pytest test/integration/step_defs/
 
 # Run a specific feature
-pytest test/integration/step_defs/test_apply_flows.py -v
+pytest test/integration/step_defs/test_password_reset.py -v
+pytest test/integration/step_defs/test_dynamic_questions.py -v
+pytest test/integration/step_defs/test_multi_step_form.py -v
 ```
 
-BDD tests use Gherkin `.feature` files in `test/integration/features/` with step definitions in `test/integration/step_defs/`.
-
----
-
-### Current limitations
-
-- **Image-selection captchas** (e.g., "select all traffic lights") cannot be solved and will abort.
-- **OAuth-only login** (e.g., only "Sign in with Google") cannot be automated.
-- **Job board strategies** are heuristic-based. Complex multi-step wizards (Workday, Taleo) may need per-board refinement.
-- The Playwright adapter uses text heuristics to detect login/captcha/OAuth states — may need tuning for specific boards.
+BDD features:
+- `guest_apply`, `login_required`, `login_with_otp`, `account_exists` — basic application flows
+- `text_captcha`, `image_captcha` — captcha handling
+- `debug_mode` — submit skipping and metadata capture
+- `password_reset` — 8 scenarios: code/link reset, post-reset landing, retry, timeout, debug
+- `dynamic_questions` — 5 scenarios: work auth, salary, essay, notice period, static-only
+- `multi_step_form` — 4 scenarios: Next/Continue vs Submit, Save & Continue, review page
+- `telegram_commands` — bot command handling
+- `config_validation` — format and connectivity checks
 
 ---
 
@@ -238,8 +214,9 @@ pre-commit run --all-files
 
 ### Project principles
 
-- **Small classes and methods** — one class, one reason to change.
-- **Domain depends only on abstractions** — infra and CLI are thin wiring layers.
-- **Every commit is tested** — unit tests with in-memory mocks, BDD integration tests with Gherkin scenarios.
-- **Debug before submit** — always run with `debug_mode: true` first on a new job board.
-- **Hot-reloadable config** — edit JSON files without restarting the bot.
+- **LLM-driven** — no hardcoded heuristics for form filling or page detection
+- **Domain depends only on abstractions** — infra and CLI are thin wiring layers
+- **Every commit is tested** — pre-commit hook runs full test suite
+- **BDD for complex flows** — Gherkin scenarios with ScriptedLLMClient for deterministic tests
+- **Hot-reloadable config** — edit JSON files without restarting the bot
+- **Debug before submit** — always run with `debug_mode: true` first on a new job board

@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 
 @dataclass(frozen=True)
@@ -147,6 +147,63 @@ class ChoiceQuestionResponse:
     selected_options: Sequence[str]
 
 
+@dataclass(frozen=True)
+class ToolDefinition:
+    """Schema for a browser tool the LLM agent can call."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class ToolCall:
+    """A single tool invocation decided by the LLM."""
+
+    name: str
+    arguments: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class LLMToolResponse:
+    """Parsed response from an LLM that supports tool/function calling."""
+
+    tool_calls: list[ToolCall] | None = None
+    text: str | None = None
+    finish_reason: str | None = None
+
+
+@dataclass(frozen=True)
+class AgentStep:
+    """Record of one step executed in the browser-agent loop."""
+
+    step_number: int
+    tool_name: str
+    tool_args: dict[str, Any]
+    tool_result: str
+    screenshot_bytes: bytes | None = None
+
+
+@dataclass(frozen=True)
+class AgentTask:
+    """High-level task for the browser agent to execute."""
+
+    objective: str
+    context: dict[str, Any] = field(default_factory=dict)
+    max_steps: int = 50
+    debug: bool = False
+
+
+@dataclass(frozen=True)
+class AgentResult:
+    """Outcome of a browser-agent task execution."""
+
+    status: str  # "success" | "failed" | "skipped"
+    reason: str | None = None
+    data: dict[str, Any] = field(default_factory=dict)
+    steps_taken: list[AgentStep] = field(default_factory=list)
+
+
 __all__ = [
     "AppConfig",
     "UserProfile",
@@ -159,5 +216,11 @@ __all__ = [
     "RunContext",
     "FreeTextQuestionResponse",
     "ChoiceQuestionResponse",
+    "ToolDefinition",
+    "ToolCall",
+    "LLMToolResponse",
+    "AgentStep",
+    "AgentTask",
+    "AgentResult",
 ]
 

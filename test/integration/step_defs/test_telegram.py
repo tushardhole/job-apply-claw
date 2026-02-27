@@ -9,10 +9,9 @@ from typing import Any
 import pytest
 from pytest_bdd import given, when, then, scenarios, parsers
 
-from domain.models import AppConfig, UserProfile
+from domain.models import AgentResult, AgentTask, AppConfig, UserProfile
 from infra.telegram.bot_listener import TelegramBot
 from test.mocks import (
-    FakeBrowserSession,
     FixedClock,
     InMemoryConfigProvider,
     InMemoryCredentialRepository,
@@ -24,6 +23,11 @@ from test.mocks import (
 scenarios("../features/telegram_commands.feature")
 
 
+class _FakeAgentForTelegram:
+    async def execute_task(self, task: AgentTask) -> AgentResult:
+        return AgentResult(status="success")
+
+
 @dataclass
 class BotContext:
     bot: TelegramBot = None  # type: ignore[assignment]
@@ -31,7 +35,7 @@ class BotContext:
     update_counter: int = 100
 
 
-def _make_bot(*, browser: FakeBrowserSession | None = None) -> BotContext:
+def _make_bot() -> BotContext:
     config = AppConfig(
         bot_token="tok",
         telegram_chat_id="42",
@@ -43,7 +47,6 @@ def _make_bot(*, browser: FakeBrowserSession | None = None) -> BotContext:
         profile=UserProfile(full_name="Test", email="t@t.com"),
     )
     bctx = BotContext()
-    b = browser or FakeBrowserSession()
     bot = TelegramBot(
         config_provider=provider,
         job_repo=InMemoryJobApplicationRepository(),
@@ -51,7 +54,7 @@ def _make_bot(*, browser: FakeBrowserSession | None = None) -> BotContext:
         clock=FixedClock(datetime(2025, 6, 1, tzinfo=timezone.utc)),
         id_generator=SequentialIdGenerator(),
         logger=InMemoryLogger(),
-        browser_factory=lambda: b,
+        agent_factory=lambda: _FakeAgentForTelegram(),
     )
     bot._chat_id = "42"
     bot._bot_token = "tok"
@@ -94,7 +97,7 @@ def given_bot() -> BotContext:
 
 @given("a running Telegram bot with a guest-apply browser", target_fixture="bot_ctx")
 def given_bot_with_browser() -> BotContext:
-    return _make_bot(browser=FakeBrowserSession(login_required=False, guest_apply_available=True))
+    return _make_bot()
 
 
 @when(parsers.parse('the user sends "{text}"'))
