@@ -5,7 +5,7 @@ from domain.ports import BrowserSessionPort, DebugArtifactStorePort
 
 
 class DebugRunManager:
-    """Coordinates per-step screenshot capture for debug runs."""
+    """Coordinates per-step screenshot capture and run metadata for debug runs."""
 
     def __init__(self, artifact_store: DebugArtifactStorePort) -> None:
         self._artifact_store = artifact_store
@@ -23,3 +23,10 @@ class DebugRunManager:
             return None
         screenshot = await browser.take_screenshot(step_name)
         return self._artifact_store.save_screenshot(run_context, step_name, screenshot)
+
+    def save_metadata(
+        self,
+        run_context: RunContext,
+        metadata: dict[str, object],
+    ) -> str:
+        return self._artifact_store.save_run_metadata(run_context, metadata)

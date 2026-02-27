@@ -64,6 +64,7 @@ class JobApplicationAgent:
         common_answers: CommonAnswers,
         run_context: RunContext,
     ) -> JobApplicationRecord:
+        started_at = self._clock.now().astimezone(timezone.utc)
         record = JobApplicationRecord(
             id=self._id_generator.new_correlation_id(),
             company_name=job.company_name,
@@ -82,11 +83,12 @@ class JobApplicationAgent:
             await self._capture_debug_step(run_context, browser, "page_loaded")
 
             if await browser.detect_oauth_only_login():
-                return await self._finalize_failure(
-                    record,
-                    ui,
-                    "OAuth-only login cannot be automated",
+                await self._capture_debug_step(run_context, browser, "oauth_only_detected")
+                result = await self._finalize_failure(
+                    record, ui, "OAuth-only login cannot be automated",
                 )
+                self._write_run_metadata(run_context, job, started_at, result)
+                return result
 
             await self._account_flow.ensure_access(
                 browser=browser,
@@ -106,12 +108,15 @@ class JobApplicationAgent:
 
             captcha_result = await self._captcha_handler.handle_if_present(browser, ui)
             if not captcha_result.solved:
-                return await self._finalize_failure(
-                    record,
-                    ui,
-                    captcha_result.failure_reason or "Captcha handling failed",
+                await self._capture_debug_step(run_context, browser, "captcha_failed")
+                result = await self._finalize_failure(
+                    record, ui, captcha_result.failure_reason or "Captcha handling failed",
                 )
+                self._write_run_metadata(run_context, job, started_at, result)
+                return result
             await self._capture_debug_step(run_context, browser, "captcha_done")
+
+            await self._capture_debug_step(run_context, browser, "pre_submit")
 
             if run_context.is_debug:
                 skipped = replace(
@@ -123,6 +128,7 @@ class JobApplicationAgent:
                 await ui.send_info(
                     f"[DEBUG] Prepared application for {job.company_name} but skipped final submit.",
                 )
+                self._write_run_metadata(run_context, job, started_at, skipped)
                 return skipped
 
             await browser.click_button("Apply")
@@ -135,6 +141,7 @@ class JobApplicationAgent:
             await ui.send_info(
                 f"Application submitted for {job.company_name} - {job.job_title}.",
             )
+            self._write_run_metadata(run_context, job, started_at, applied)
             return applied
         except Exception as exc:
             self._logger.error(
@@ -143,7 +150,10 @@ class JobApplicationAgent:
                 company_name=job.company_name,
                 error=str(exc),
             )
-            return await self._finalize_failure(record, ui, str(exc))
+            await self._capture_debug_step(run_context, browser, "failure_snapshot")
+            result = await self._finalize_failure(record, ui, str(exc))
+            self._write_run_metadata(run_context, job, started_at, result)
+            return result
 
     async def _finalize_failure(
         self,
@@ -201,3 +211,24 @@ class JobApplicationAgent:
         if self._debug_manager is None:
             return
         await self._debug_manager.capture_step(run_context, browser, step_name)
+
+    def _write_run_metadata(
+        self,
+        run_context: RunContext,
+        job: JobPostingRef,
+        started_at: object,
+        record: JobApplicationRecord,
+    ) -> None:
+        if self._debug_manager is None or not run_context.is_debug:
+            return
+        ended_at = self._clock.now().astimezone(timezone.utc)
+        self._debug_manager.save_metadata(run_context, {
+            "run_id": run_context.run_id,
+            "company": job.company_name,
+            "job_url": job.job_url,
+            "mode": "debug" if run_context.is_debug else "normal",
+            "started_at": str(started_at),
+            "ended_at": str(ended_at),
+            "outcome": record.status.value,
+            "failure_reason": record.failure_reason,
+        })

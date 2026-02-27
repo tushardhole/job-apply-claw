@@ -190,3 +190,9 @@ def test_debug_mode_skips_final_submit_and_captures_screenshots() -> None:
     assert saved.status is JobApplicationStatus.SKIPPED
     assert "Apply" not in browser.clicked_buttons
     assert len(debug_store.saved) >= 3
+    step_names = [s[1] for s in debug_store.saved]
+    assert "pre_submit" in step_names
+    assert len(debug_store.metadata) == 1
+    meta = debug_store.metadata[0][1]
+    assert meta["outcome"] == "skipped"
+    assert meta["mode"] == "debug"

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -7,7 +8,7 @@ from domain.models import RunContext
 
 
 class FileSystemDebugArtifactStore:
-    """Stores debug screenshots under logs/run_<id>_<timestamp>/."""
+    """Stores debug screenshots and metadata under logs/run_<id>/."""
 
     def __init__(self, base_dir: str = "logs") -> None:
         self._base_dir = Path(base_dir)
@@ -31,6 +32,17 @@ class FileSystemDebugArtifactStore:
         filename = f"Screenshot_{count:03d}_{self._safe(step_name)}.png"
         path = run_dir / filename
         path.write_bytes(image_bytes)
+        return str(path)
+
+    def save_run_metadata(
+        self,
+        run_context: RunContext,
+        metadata: dict[str, object],
+    ) -> str:
+        run_dir = self._run_dir(run_context)
+        run_dir.mkdir(parents=True, exist_ok=True)
+        path = run_dir / "run_meta.json"
+        path.write_text(json.dumps(metadata, indent=2, default=str))
         return str(path)
 
     def _run_dir(self, run_context: RunContext) -> Path:
