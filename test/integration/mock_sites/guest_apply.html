@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html>
+<head><title>Guest Apply - Acme Corp</title></head>
+<body>
+  <h1>Apply as Guest</h1>
+  <form id="apply-form">
+    <label for="full_name">Full Name</label>
+    <input id="full_name" name="full_name" type="text" />
+
+    <label for="email">Email</label>
+    <input id="email" name="email" type="email" />
+
+    <label for="phone">Phone</label>
+    <input id="phone" name="phone" type="text" />
+
+    <label for="address">Address</label>
+    <input id="address" name="address" type="text" />
+
+    <label for="resume">Resume</label>
+    <input id="resume" name="resume" type="file" />
+
+    <label for="salary_expectation">Salary Expectation</label>
+    <input id="salary_expectation" name="salary_expectation" type="text" />
+
+    <button type="button" id="apply-btn" onclick="document.getElementById('result').textContent='Applied!'">Apply</button>
+  </form>
+  <div id="result"></div>
+</body>
+</html>
