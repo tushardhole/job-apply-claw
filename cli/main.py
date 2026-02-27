@@ -38,6 +38,11 @@ def build_parser() -> argparse.ArgumentParser:
     start_p.add_argument("--browser", choices=["mock", "playwright"], default="playwright")
     start_p.add_argument("--headless", action="store_true", default=True)
     start_p.add_argument("--no-headless", dest="headless", action="store_false")
+    start_p.add_argument(
+        "--skip-connectivity",
+        action="store_true",
+        help="Skip Telegram/OpenAI connectivity checks on startup",
+    )
 
     sub.add_parser("onboard")
 
@@ -129,6 +134,7 @@ def _handle_start(
     ids: UuidIdGenerator,
 ) -> int:
     config_provider = FileSystemConfigProvider(args.config_dir)
+
     errors = config_provider.validate()
     if errors:
         print("Config validation failed:")
@@ -141,6 +147,20 @@ def _handle_start(
     print(f"Config OK: bot_token=***{cfg.bot_token[-4:]}, chat_id={cfg.telegram_chat_id}")
     print(f"Profile: {profile.full_name} ({profile.email})")
     print(f"Debug mode: {'ON' if cfg.debug_mode else 'OFF'}")
+
+    if not args.skip_connectivity:
+        print("Verifying API connectivity...")
+        conn_result = asyncio.run(config_provider.validate_connectivity())
+        if not conn_result.ok:
+            print("Connectivity check failed:")
+            for err in conn_result.errors:
+                print(f"  - {err}")
+            return 1
+        print(f"Telegram bot: @{conn_result.bot_username}")
+        print("OpenAI API: connected")
+    else:
+        print("Skipping connectivity checks (--skip-connectivity)")
+
     print("Starting Telegram bot listener...")
 
     def _make_browser():
